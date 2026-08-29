@@ -1,30 +1,42 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workfromphone/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
+  testWidgets('Bottom navigation and Projects / Settings screens smoke test', (WidgetTester tester) async {
     // Build our app and trigger a frame.
     await tester.pumpWidget(const MyApp());
+    await tester.pumpAndSettle();
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    // Verify Projects tab is active and shows hero card
+    expect(find.text('Projects'), findsWidgets);
+    expect(find.text('Work on PC Project'), findsOneWidget);
+    expect(find.text('Browse & Select Project Directory'), findsOneWidget);
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    // Switch to Settings tab
+    final settingsNavDestination = find.byIcon(Icons.settings_outlined);
+    expect(settingsNavDestination, findsOneWidget);
+    await tester.tap(settingsNavDestination);
+    await tester.pumpAndSettle();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Verify Settings content
+    expect(find.text('Settings & Harness'), findsOneWidget);
+    expect(find.text('PC Backend Connection'), findsOneWidget);
+    expect(find.text('LLM Provider & Router'), findsOneWidget);
+    expect(find.text('Selected Model ID'), findsOneWidget);
+
+    // Switch back to Projects tab
+    final projectsNavDestination = find.byIcon(Icons.folder_outlined);
+    expect(projectsNavDestination, findsOneWidget);
+    await tester.tap(projectsNavDestination);
+    await tester.pumpAndSettle();
+
+    // Verify back on Projects tab
+    expect(find.text('Work on PC Project'), findsOneWidget);
   });
 }
