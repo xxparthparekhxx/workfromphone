@@ -5,6 +5,9 @@ FastAPI server for the WorkFromPhone project.
 ## Features
 
 - **FastAPI**: Modern, high-performance web framework.
+- **Linux System Monitor**: CPU, memory, storage, network, process, thermal, and GPU metrics.
+- **Persistent PTY**: Independent interactive shell sessions over authenticated WebSockets.
+- **Optional Bearer Authentication**: Protects every capability endpoint when `ACCESS_TOKEN` is set.
 - **Pydantic v2**: Strict type safety, validation, and serialization.
 - **Pydantic Settings**: Centralized environment variable management (`.env`).
 - **CORS Middleware**: Pre-configured for Flutter web/mobile/desktop development.
@@ -61,6 +64,32 @@ or simply:
 ```bash
 uv run backend
 ```
+
+For a network-accessible development server, set a strong `ACCESS_TOKEN`.
+Release installations created by the Flutter setup wizard bind to
+`127.0.0.1` and are reached through SSH or Cloudflare Tunnel.
+
+---
+
+## Self-contained Linux releases
+
+Tags matching `backend-v*` build x86_64 and ARM64 executables using
+`.github/workflows/backend-release.yml`. Each release includes:
+
+- `workfromphone-backend-linux-x86_64.tar.gz`
+- `workfromphone-backend-linux-aarch64.tar.gz`
+- `backend-manifest.json` containing download URLs and SHA-256 checksums
+
+Build the Flutter app with the release repository used by the setup wizard:
+
+```bash
+flutter build apk \
+  --dart-define=WFP_BACKEND_RELEASE_REPO=owner/repository
+```
+
+The wizard verifies the SSH host key, detects the remote architecture,
+checks the archive checksum, and installs a systemd user service under the
+remote account.
 
 ---
 

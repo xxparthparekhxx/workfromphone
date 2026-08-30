@@ -52,11 +52,31 @@ class FetchModelsResponse(BaseModel):
     count: int
 
 
+class TokenUsage(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    reasoning_tokens: int = 0
+    cached_tokens: int = 0
+    cost: float | None = None
+    context_tokens: int = 0
+    exact: bool = True
+
+
 class StreamEvent(BaseModel):
-    type: Literal["status", "chunk", "tool_call_start", "tool_call_result", "done", "error"]
+    type: Literal[
+        "status",
+        "chunk",
+        "tool_call_start",
+        "tool_call_result",
+        "usage",
+        "done",
+        "error",
+    ]
     content: Optional[str] = None
     tool: Optional[str] = None
     args: Optional[Dict[str, Any]] = None
     output: Optional[str] = None
     message: Optional[str] = None
     total_steps: Optional[int] = None
+    usage: Optional[TokenUsage] = None

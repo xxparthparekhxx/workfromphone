@@ -39,3 +39,37 @@ class QuickPathsResponse(BaseModel):
     home: str
     current_workspace: str
     common_paths: List[DirectoryItem]
+
+
+class WriteFileRequest(BaseModel):
+    project_path: str
+    relative_path: str
+    content: str
+
+
+class CreateItemRequest(BaseModel):
+    project_path: str
+    relative_path: str
+    is_dir: bool = False
+
+
+class DeleteItemRequest(BaseModel):
+    project_path: str
+    relative_path: str
+
+
+class FileActionResponse(BaseModel):
+    success: bool
+    message: str
+    path: str
+    size_bytes: Optional[int] = None
+
+
+class UploadFilesResponse(BaseModel):
+    success: bool
+    files: List[FileActionResponse]
+
+
+class ProjectFilesResponse(BaseModel):
+    files: List[str]
+    truncated: bool = False

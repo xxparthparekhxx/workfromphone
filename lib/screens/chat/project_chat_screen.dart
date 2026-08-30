@@ -1,56 +1,216 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:workfromphone/models/chat_message.dart';
+import 'package:workfromphone/models/conversation_session.dart';
 import 'package:workfromphone/models/llm_config.dart';
 import 'package:workfromphone/models/model_info.dart';
 import 'package:workfromphone/models/project_directory.dart';
+import 'package:workfromphone/models/task_stats.dart';
 import 'package:workfromphone/models/tool_event.dart';
+import 'package:workfromphone/screens/chat/conversation_history_sheet.dart';
+import 'package:workfromphone/screens/files/project_files_tab.dart';
+import 'package:workfromphone/screens/git/project_git_tab.dart';
+import 'package:workfromphone/screens/system/project_system_tab.dart';
+import 'package:workfromphone/screens/terminal/project_terminal_tab.dart';
 import 'package:workfromphone/services/api_service.dart';
+import 'package:workfromphone/services/chat_composer_service.dart';
 import 'package:workfromphone/services/chat_service.dart';
 import 'package:workfromphone/services/storage_service.dart';
+import 'package:workfromphone/widgets/markdown_message_view.dart';
+import 'package:workfromphone/widgets/model_picker_sheet.dart';
+import 'package:workfromphone/widgets/task_stats_bar.dart';
 
 class ProjectChatScreen extends StatefulWidget {
   final ProjectDirectory project;
 
-  const ProjectChatScreen({
-    super.key,
-    required this.project,
-  });
+  const ProjectChatScreen({super.key, required this.project});
 
   @override
   State<ProjectChatScreen> createState() => _ProjectChatScreenState();
 }
 
-class _ProjectChatScreenState extends State<ProjectChatScreen> {
+class _ProjectChatScreenState extends State<ProjectChatScreen>
+    with SingleTickerProviderStateMixin {
   final List<ChatMessage> _messages = [];
   final TextEditingController _inputCtrl = TextEditingController();
+  final FocusNode _chatFocusNode = FocusNode();
   final ScrollController _scrollCtrl = ScrollController();
   final ChatService _chatService = ChatService();
+  late TabController _tabController;
+  int _activeTabIndex = 0;
 
   LLMConfig _llmConfig = const LLMConfig();
   List<ModelInfo> _availableModels = [];
+  List<String> _projectFiles = [];
+  bool _isLoadingProjectFiles = false;
+  bool _projectFilesTruncated = false;
+  String? _projectFilesError;
   bool _isRunning = false;
   String? _currentStatus;
+
+  // Multi-conversation state
+  ConversationSession? _currentSession;
+
+  // Real-time statistics state
+  TaskStats _stats = const TaskStats();
+  DateTime? _taskStartTime;
+  int _streamedChars = 0;
+  int _toolCallsCount = 0;
+  final bool _showStatsBar = true;
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 5, vsync: this);
+    _tabController.addListener(_handleTabChange);
+    _inputCtrl.addListener(_handleComposerChanged);
     _loadConfig();
+  }
+
+  void _handleTabChange() {
+    if (_activeTabIndex == _tabController.index) return;
+    setState(() => _activeTabIndex = _tabController.index);
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_handleTabChange);
+    _tabController.dispose();
     _chatService.cancel();
+    _inputCtrl.removeListener(_handleComposerChanged);
     _inputCtrl.dispose();
+    _chatFocusNode.dispose();
     _scrollCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _loadConfig() async {
     final cfg = await StorageService.loadLLMConfig();
-    setState(() {
-      _llmConfig = cfg;
-    });
+    ApiService.configureAccessToken(
+      cfg.backendAccessToken,
+      backendUrl: cfg.backendUrl,
+    );
+    if (mounted) {
+      setState(() {
+        _llmConfig = cfg;
+      });
+    }
+    await _initConversationSession();
     _fetchModelsList();
+  }
+
+  Future<void> _initConversationSession() async {
+    final activeId = await StorageService.loadActiveConversationId(
+      widget.project.path,
+    );
+    final list = await StorageService.loadConversations(widget.project.path);
+    ConversationSession? session;
+    if (activeId != null) {
+      session = list.where((c) => c.id == activeId).firstOrNull;
+    }
+    session ??= list.firstOrNull;
+
+    if (session == null) {
+      session = ConversationSession(
+        id: 'conv_${DateTime.now().millisecondsSinceEpoch}',
+        projectPath: widget.project.path,
+        title: 'New Conversation',
+        model: _llmConfig.model,
+      );
+      await StorageService.saveConversation(widget.project.path, session);
+      await StorageService.saveActiveConversationId(
+        widget.project.path,
+        session.id,
+      );
+    }
+
+    if (mounted) {
+      setState(() {
+        _currentSession = session;
+        _llmConfig = _llmConfig.copyWith(model: session!.model);
+        _messages.clear();
+        _messages.addAll(session.messages);
+        _stats = session.stats;
+      });
+      _scrollToBottom();
+    }
+  }
+
+  Future<void> _saveCurrentSession() async {
+    if (_currentSession == null) return;
+    final updated = _currentSession!.copyWith(
+      messages: List.from(_messages),
+      stats: _stats,
+      updatedAt: DateTime.now(),
+      model: _llmConfig.model,
+    );
+    _currentSession = updated;
+    await StorageService.saveConversation(widget.project.path, updated);
+    await StorageService.saveActiveConversationId(
+      widget.project.path,
+      updated.id,
+    );
+  }
+
+  Future<void> _createNewConversation() async {
+    if (_isRunning) {
+      _chatService.cancel();
+    }
+    await _saveCurrentSession();
+    final newSession = ConversationSession(
+      id: 'conv_${DateTime.now().millisecondsSinceEpoch}',
+      projectPath: widget.project.path,
+      title: 'New Conversation',
+      model: _llmConfig.model,
+    );
+    await StorageService.saveConversation(widget.project.path, newSession);
+    await StorageService.saveActiveConversationId(
+      widget.project.path,
+      newSession.id,
+    );
+    if (mounted) {
+      setState(() {
+        _currentSession = newSession;
+        _messages.clear();
+        _stats = const TaskStats();
+        _isRunning = false;
+        _currentStatus = null;
+      });
+    }
+  }
+
+  Future<void> _switchConversation(ConversationSession session) async {
+    if (_isRunning) {
+      _chatService.cancel();
+    }
+    await _saveCurrentSession();
+    await StorageService.saveActiveConversationId(
+      widget.project.path,
+      session.id,
+    );
+    if (mounted) {
+      setState(() {
+        _currentSession = session;
+        _llmConfig = _llmConfig.copyWith(model: session.model);
+        _messages.clear();
+        _messages.addAll(session.messages);
+        _stats = session.stats;
+        _isRunning = false;
+        _currentStatus = null;
+      });
+      _scrollToBottom();
+    }
+  }
+
+  void _openConversationHistory() {
+    ConversationHistorySheet.show(
+      context,
+      project: widget.project,
+      activeConversationId: _currentSession?.id,
+      onSelectConversation: _switchConversation,
+      onNewConversation: _createNewConversation,
+    );
   }
 
   Future<void> _fetchModelsList() async {
@@ -68,6 +228,43 @@ class _ProjectChatScreenState extends State<ProjectChatScreen> {
     } catch (_) {}
   }
 
+  void _handleComposerChanged() {
+    if (!mounted) return;
+    final mention = ChatComposerService.mentionTrigger(_inputCtrl.value);
+    if (mention != null && _projectFiles.isEmpty && !_isLoadingProjectFiles) {
+      _loadProjectFiles();
+    }
+    setState(() {});
+  }
+
+  Future<void> _loadProjectFiles() async {
+    if (_isLoadingProjectFiles) return;
+    setState(() {
+      _isLoadingProjectFiles = true;
+      _projectFilesError = null;
+    });
+    try {
+      final result = await ApiService.listProjectFiles(
+        _llmConfig.backendUrl,
+        projectPath: widget.project.path,
+      );
+      if (!mounted) return;
+      setState(() {
+        _projectFiles = result.files;
+        _projectFilesTruncated = result.truncated;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _projectFilesError = error.toString().replaceFirst('Exception: ', '');
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingProjectFiles = false);
+      }
+    }
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollCtrl.hasClients) {
@@ -80,18 +277,81 @@ class _ProjectChatScreenState extends State<ProjectChatScreen> {
     });
   }
 
-  void _sendMessage([String? textToSend]) {
-    final text = textToSend ?? _inputCtrl.text.trim();
-    if (text.isEmpty || _isRunning) return;
+  int _findModelContextLimit(String modelId) {
+    for (final m in _availableModels) {
+      if (m.id == modelId && m.contextLength != null) {
+        return m.contextLength!;
+      }
+    }
+    final lower = modelId.toLowerCase();
+    if (lower.contains('gemini-2.0') || lower.contains('gemini-1.5')) {
+      return 1048576;
+    }
+    if (lower.contains('claude-3-7') ||
+        lower.contains('claude-3.7') ||
+        lower.contains('claude-3-5') ||
+        lower.contains('claude-3.5')) {
+      return 200000;
+    }
+    if (lower.contains('gpt-4o') || lower.contains('o3-mini')) return 128000;
+    if (lower.contains('llama-3.3') || lower.contains('llama-3.1')) {
+      return 131072;
+    }
+    if (lower.contains('deepseek')) return 64000;
+    return 200000;
+  }
+
+  Future<void> _sendMessage([String? textToSend]) async {
+    var text = (textToSend ?? _inputCtrl.text).trim();
+    if (text.isEmpty) return;
+
+    if (textToSend == null) {
+      final parsed = ChatComposerService.parseSlashCommand(text);
+      if (parsed != null) {
+        final command = parsed.command;
+        if (command == null) {
+          _showComposerMessage(
+            parsed.name.isEmpty
+                ? 'Type a command after /. Use /help to see all commands.'
+                : 'Unknown command /${parsed.name}. Use /help to see all commands.',
+          );
+          return;
+        }
+        switch (command.action) {
+          case ChatCommandAction.showHelp:
+            _inputCtrl.clear();
+            _showCommandsSheet();
+            return;
+          case ChatCommandAction.newConversation:
+            _inputCtrl.clear();
+            await _createNewConversation();
+            return;
+          case ChatCommandAction.chooseModel:
+            _inputCtrl.clear();
+            _showModelPicker();
+            return;
+          case ChatCommandAction.stopTask:
+            _inputCtrl.clear();
+            _stopCurrentTask();
+            return;
+          case ChatCommandAction.sendPrompt:
+            text = command.expand(parsed.arguments);
+        }
+      }
+    }
+
+    if (_isRunning) return;
 
     if (textToSend == null) {
       _inputCtrl.clear();
     }
 
+    final apiContent = ChatComposerService.buildApiContent(text);
     final userMsg = ChatMessage(
       id: 'user_${DateTime.now().millisecondsSinceEpoch}',
       role: MessageRole.user,
       content: text,
+      apiContent: apiContent == text ? null : apiContent,
     );
 
     final assistantMsg = ChatMessage(
@@ -101,13 +361,58 @@ class _ProjectChatScreenState extends State<ProjectChatScreen> {
       statusMessage: 'Starting task...',
     );
 
+    _taskStartTime = DateTime.now();
+    _streamedChars = 0;
+    _toolCallsCount = 0;
+
+    final contextLimit = _findModelContextLimit(_llmConfig.model);
+    final totalCharLen =
+        _messages.fold<int>(0, (sum, m) => sum + m.content.length) +
+        apiContent.length;
+    final estimatedPromptTokens =
+        (totalCharLen / 3.8).round() + 1200; // system prompt estimate
+    final basePromptTokens = _stats.promptTokens;
+    final baseCompletionTokens = _stats.completionTokens;
+    final baseTotalTokens = _stats.totalTokens;
+    final baseReasoningTokens = _stats.reasoningTokens;
+    final baseCachedTokens = _stats.cachedTokens;
+    final baseCost = _stats.cost;
+    final baseToolCalls = _stats.toolCallsCount;
+    final baseSteps = _stats.stepsCount;
+    var receivedExactUsage = false;
+    var exactTaskCompletionTokens = 0;
+
+    if (_currentSession != null &&
+        (_currentSession!.title == 'New Conversation' ||
+            _currentSession!.title.isEmpty)) {
+      String cleanTitle = text.replaceAll('\n', ' ').trim();
+      if (cleanTitle.length > 32) {
+        cleanTitle = '${cleanTitle.substring(0, 32)}...';
+      }
+      _currentSession!.title = cleanTitle;
+    }
+
     setState(() {
       _messages.add(userMsg);
       _messages.add(assistantMsg);
       _isRunning = true;
       _currentStatus = 'Connecting to model...';
+      _stats = _stats.copyWith(
+        promptTokens: basePromptTokens + estimatedPromptTokens,
+        completionTokens: baseCompletionTokens,
+        totalTokens: baseTotalTokens + estimatedPromptTokens,
+        contextTokens: estimatedPromptTokens,
+        contextLimit: contextLimit,
+        tokensPerSecond: 0,
+        durationMs: 0,
+        toolCallsCount: baseToolCalls,
+        stepsCount: baseSteps,
+        isStreaming: true,
+        usageIsEstimated: true,
+      );
     });
 
+    _saveCurrentSession();
     _scrollToBottom();
 
     _chatService.runTask(
@@ -126,23 +431,43 @@ class _ProjectChatScreenState extends State<ProjectChatScreen> {
       },
       onChunk: (chunk) {
         if (mounted) {
+          _streamedChars += chunk.length;
+          final completionTokens = (_streamedChars / 3.8).round();
+          final elapsedMs = _taskStartTime != null
+              ? DateTime.now().difference(_taskStartTime!).inMilliseconds
+              : 0;
+          final tps = elapsedMs > 250
+              ? (completionTokens / (elapsedMs / 1000.0))
+              : 0.0;
+
           setState(() {
             assistantMsg.content += chunk;
+            _stats = _stats.copyWith(
+              promptTokens: basePromptTokens + estimatedPromptTokens,
+              completionTokens: baseCompletionTokens + completionTokens,
+              totalTokens:
+                  baseTotalTokens + estimatedPromptTokens + completionTokens,
+              contextTokens: estimatedPromptTokens + completionTokens,
+              tokensPerSecond: tps,
+              durationMs: elapsedMs,
+              isStreaming: true,
+              usageIsEstimated: true,
+            );
           });
           _scrollToBottom();
         }
       },
       onToolCallStart: (toolName, args) {
         if (mounted) {
+          _toolCallsCount++;
           setState(() {
             assistantMsg.toolEvents.add(
-              ToolEvent(
-                toolName: toolName,
-                args: args,
-                isExecuting: true,
-              ),
+              ToolEvent(toolName: toolName, args: args, isExecuting: true),
             );
             _currentStatus = 'Executing $toolName...';
+            _stats = _stats.copyWith(
+              toolCallsCount: baseToolCalls + _toolCallsCount,
+            );
           });
           _scrollToBottom();
         }
@@ -162,14 +487,71 @@ class _ProjectChatScreenState extends State<ProjectChatScreen> {
           _scrollToBottom();
         }
       },
+      onUsage: (usage) {
+        if (mounted) {
+          receivedExactUsage = usage.exact;
+          exactTaskCompletionTokens = usage.completionTokens;
+          final elapsedMs = _taskStartTime != null
+              ? DateTime.now().difference(_taskStartTime!).inMilliseconds
+              : 0;
+          final tps = elapsedMs > 250
+              ? usage.completionTokens / (elapsedMs / 1000.0)
+              : 0.0;
+          setState(() {
+            _stats = _stats.copyWith(
+              promptTokens: basePromptTokens + usage.promptTokens,
+              completionTokens: baseCompletionTokens + usage.completionTokens,
+              totalTokens: baseTotalTokens + usage.totalTokens,
+              contextTokens: usage.contextTokens,
+              reasoningTokens: baseReasoningTokens + usage.reasoningTokens,
+              cachedTokens: baseCachedTokens + usage.cachedTokens,
+              cost: baseCost + (usage.cost ?? 0),
+              tokensPerSecond: tps,
+              durationMs: elapsedMs,
+              usageIsEstimated: !usage.exact,
+            );
+          });
+        }
+      },
       onDone: (steps) {
         if (mounted) {
+          final elapsedMs = _taskStartTime != null
+              ? DateTime.now().difference(_taskStartTime!).inMilliseconds
+              : 0;
+          final completionTokens = (_streamedChars / 3.8).round();
+          final completionTokensForSpeed = receivedExactUsage
+              ? exactTaskCompletionTokens
+              : completionTokens;
+          final tps = elapsedMs > 250
+              ? completionTokensForSpeed / (elapsedMs / 1000.0)
+              : 0.0;
+
           setState(() {
             _isRunning = false;
             assistantMsg.isStreaming = false;
             assistantMsg.statusMessage = null;
             _currentStatus = null;
+            _stats = _stats.copyWith(
+              promptTokens: receivedExactUsage
+                  ? _stats.promptTokens
+                  : basePromptTokens + estimatedPromptTokens,
+              completionTokens: receivedExactUsage
+                  ? _stats.completionTokens
+                  : baseCompletionTokens + completionTokens,
+              totalTokens: receivedExactUsage
+                  ? _stats.totalTokens
+                  : baseTotalTokens + estimatedPromptTokens + completionTokens,
+              contextTokens: receivedExactUsage
+                  ? _stats.contextTokens
+                  : estimatedPromptTokens + completionTokens,
+              tokensPerSecond: tps,
+              durationMs: elapsedMs,
+              stepsCount: baseSteps + (steps ?? 1),
+              isStreaming: false,
+              usageIsEstimated: !receivedExactUsage,
+            );
           });
+          _saveCurrentSession();
           _scrollToBottom();
         }
       },
@@ -182,120 +564,171 @@ class _ProjectChatScreenState extends State<ProjectChatScreen> {
             assistantMsg.content += '\n\n⚠️ $err';
             assistantMsg.statusMessage = null;
             _currentStatus = null;
+            _stats = _stats.copyWith(isStreaming: false);
           });
+          _saveCurrentSession();
           _scrollToBottom();
         }
       },
     );
   }
 
-  void _showModelPicker() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        final models = _availableModels.isNotEmpty
-            ? _availableModels
-            : [
-                const ModelInfo(id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet'),
-                const ModelInfo(id: 'openai/gpt-4o', name: 'GPT-4o'),
-                const ModelInfo(id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini'),
-                const ModelInfo(id: 'deepseek/deepseek-chat', name: 'DeepSeek V3'),
-                const ModelInfo(id: 'deepseek/deepseek-r1', name: 'DeepSeek R1'),
-                const ModelInfo(id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B'),
-                const ModelInfo(id: 'google/gemini-2.0-flash-001', name: 'Gemini 2.0 Flash'),
-              ];
+  void _stopCurrentTask() {
+    if (!_isRunning) {
+      _showComposerMessage('There is no running task to stop.');
+      return;
+    }
+    _chatService.cancel();
+    setState(() {
+      _isRunning = false;
+      _currentStatus = null;
+      _stats = _stats.copyWith(isStreaming: false);
+      for (final message in _messages.reversed) {
+        if (message.role == MessageRole.assistant && message.isStreaming) {
+          message.isStreaming = false;
+          message.statusMessage = null;
+          break;
+        }
+      }
+    });
+    _saveCurrentSession();
+  }
 
-        return DraggableScrollableSheet(
-          initialChildSize: 0.7,
-          minChildSize: 0.4,
-          maxChildSize: 0.9,
-          expand: false,
-          builder: (_, scrollCtrl) {
-            return Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.psychology, size: 24),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Select Active Model',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.refresh),
-                        tooltip: 'Refresh Models',
-                        onPressed: () {
-                          Navigator.pop(ctx);
-                          _fetchModelsList();
-                        },
-                      ),
-                    ],
+  void _showComposerMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  void _showCommandsSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.only(bottom: 12),
+          children: [
+            const ListTile(
+              title: Text(
+                'Chat commands',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              subtitle: Text('Type a command in the message box.'),
+            ),
+            for (final command in ChatComposerService.commands)
+              ListTile(
+                dense: true,
+                leading: const Icon(CupertinoIcons.command, size: 20),
+                title: Text(
+                  '/${command.name}',
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                const Divider(height: 1),
-                Expanded(
-                  child: ListView.builder(
-                    controller: scrollCtrl,
-                    itemCount: models.length,
-                    itemBuilder: (context, index) {
-                      final m = models[index];
-                      final isSelected = m.id == _llmConfig.model;
-                      return ListTile(
-                        leading: Icon(
-                          isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
-                          color: isSelected ? Theme.of(context).colorScheme.primary : null,
-                        ),
-                        title: Text(
-                          m.name,
-                          style: TextStyle(
-                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                          ),
-                        ),
-                        subtitle: Text(
-                          m.id,
-                          style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
-                        ),
-                        onTap: () async {
-                          Navigator.pop(ctx);
-                          final updated = _llmConfig.copyWith(model: m.id);
-                          await StorageService.saveLLMConfig(updated);
-                          if (mounted) {
-                            setState(() {
-                              _llmConfig = updated;
-                            });
-                          }
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
+                subtitle: Text(command.description),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _insertSlashCommand(command);
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _insertSlashCommand(ChatSlashCommand command) {
+    final text = '/${command.name} ';
+    _inputCtrl.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+    _chatFocusNode.requestFocus();
+  }
+
+  List<String> _matchingProjectFiles(String query) {
+    final normalized = query.toLowerCase();
+    final matches = _projectFiles.where((path) {
+      return normalized.isEmpty || path.toLowerCase().contains(normalized);
+    }).toList();
+    matches.sort((a, b) {
+      final aLower = a.toLowerCase();
+      final bLower = b.toLowerCase();
+      final aName = aLower.split('/').last;
+      final bName = bLower.split('/').last;
+      final aScore = aLower.startsWith(normalized)
+          ? 0
+          : aName.startsWith(normalized)
+          ? 1
+          : 2;
+      final bScore = bLower.startsWith(normalized)
+          ? 0
+          : bName.startsWith(normalized)
+          ? 1
+          : 2;
+      return aScore == bScore ? aLower.compareTo(bLower) : aScore - bScore;
+    });
+    return matches.take(8).toList();
+  }
+
+  void _insertFileMention(FileMentionTrigger trigger, String path) {
+    final current = _inputCtrl.value;
+    final replacement = '@$path ';
+    final updated = current.text.replaceRange(
+      trigger.start,
+      trigger.end,
+      replacement,
+    );
+    final cursor = trigger.start + replacement.length;
+    _inputCtrl.value = TextEditingValue(
+      text: updated,
+      selection: TextSelection.collapsed(offset: cursor),
+    );
+    _chatFocusNode.requestFocus();
+  }
+
+  void _showModelPicker() {
+    ModelPickerSheet.show(
+      context: context,
+      selectedModelId: _llmConfig.model,
+      availableModels: _availableModels,
+      onRefresh: () async {
+        await _fetchModelsList();
+      },
+      onModelSelected: (selectedModel) async {
+        final updated = _llmConfig.copyWith(model: selectedModel.id);
+        await StorageService.saveLLMConfig(updated);
+        if (mounted) {
+          setState(() {
+            _llmConfig = updated;
+            _stats = _stats.copyWith(
+              contextLimit:
+                  selectedModel.contextLength ??
+                  _findModelContextLimit(selectedModel.id),
             );
-          },
-        );
+            _currentSession?.model = selectedModel.id;
+          });
+          await _saveCurrentSession();
+        }
       },
     );
   }
 
   Widget _buildToolEventCard(ToolEvent event) {
+    final theme = Theme.of(context);
+    final output = event.output;
+    final hasOutput = output != null && output.isNotEmpty;
+
     return Card(
       elevation: 0,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
       margin: const EdgeInsets.symmetric(vertical: 4),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
         side: BorderSide(
-          color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5),
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
         ),
       ),
       child: ExpansionTile(
@@ -308,7 +741,9 @@ class _ProjectChatScreenState extends State<ProjectChatScreen> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : Icon(
-                event.isError ? Icons.error_outline : Icons.check_circle_outline,
+                event.isError
+                    ? CupertinoIcons.exclamationmark_circle
+                    : CupertinoIcons.check_mark_circled,
                 size: 18,
                 color: event.isError ? Colors.red : Colors.green,
               ),
@@ -321,22 +756,121 @@ class _ProjectChatScreenState extends State<ProjectChatScreen> {
           ),
         ),
         children: [
-          if (event.output != null && event.output!.isNotEmpty)
+          if (hasOutput)
             Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
               margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.85),
+                color: Colors.black.withValues(alpha: 0.9),
                 borderRadius: BorderRadius.circular(8),
-              ),
-              child: SelectableText(
-                event.output!,
-                style: const TextStyle(
-                  color: Colors.greenAccent,
-                  fontFamily: 'monospace',
-                  fontSize: 11,
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.1),
+                  width: 1,
                 ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Top bar with line count and copy button
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.05),
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(8),
+                      ),
+                      border: Border(
+                        bottom: BorderSide(
+                          color: Colors.white.withValues(alpha: 0.08),
+                        ),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          CupertinoIcons.command,
+                          size: 12,
+                          color: Colors.greenAccent,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${output.split('\n').length} lines',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontFamily: 'monospace',
+                            color: Colors.white.withValues(alpha: 0.6),
+                          ),
+                        ),
+                        const Spacer(),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(4),
+                          onTap: () {
+                            Clipboard.setData(ClipboardData(text: output));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Tool output copied to clipboard',
+                                ),
+                                duration: Duration(seconds: 2),
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 2,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  CupertinoIcons.doc_on_doc,
+                                  size: 11,
+                                  color: Colors.white.withValues(alpha: 0.7),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Copy',
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontFamily: 'monospace',
+                                    color: Colors.white.withValues(alpha: 0.7),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Scrollable output container
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 220),
+                    child: Scrollbar(
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(10),
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: SelectableText(
+                            output,
+                            style: const TextStyle(
+                              color: Colors.greenAccent,
+                              fontFamily: 'monospace',
+                              fontSize: 11,
+                              height: 1.35,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
         ],
@@ -369,7 +903,9 @@ class _ProjectChatScreenState extends State<ProjectChatScreen> {
           border: isUser
               ? null
               : Border.all(
-                  color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+                  color: theme.colorScheme.outlineVariant.withValues(
+                    alpha: 0.4,
+                  ),
                 ),
         ),
         child: Column(
@@ -382,17 +918,58 @@ class _ProjectChatScreenState extends State<ProjectChatScreen> {
             ],
 
             // Content
-            if (msg.content.isNotEmpty)
-              SelectableText(
-                msg.content,
-                style: TextStyle(
-                  color: isUser
-                      ? theme.colorScheme.onPrimary
-                      : theme.colorScheme.onSurface,
-                  fontSize: 14,
-                  height: 1.4,
-                ),
+            if (msg.content.isNotEmpty) ...[
+              MarkdownMessageView(
+                data: msg.content,
+                isUser: isUser,
+                isStreaming: msg.isStreaming,
               ),
+              if (!isUser && !msg.isStreaming) ...[
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(text: msg.content));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Message copied to clipboard'),
+                          duration: Duration(seconds: 2),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            CupertinoIcons.doc_on_doc,
+                            size: 13,
+                            color: theme.colorScheme.onSurfaceVariant
+                                .withValues(alpha: 0.8),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Copy',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: theme.colorScheme.onSurfaceVariant
+                                  .withValues(alpha: 0.8),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
 
             // Live status loader
             if (msg.isStreaming && msg.statusMessage != null) ...[
@@ -423,6 +1000,409 @@ class _ProjectChatScreenState extends State<ProjectChatScreen> {
     );
   }
 
+  Widget _buildComposerSuggestions(ThemeData theme) {
+    final commandSuggestions = ChatComposerService.commandSuggestions(
+      _inputCtrl.value,
+    );
+    final mention = ChatComposerService.mentionTrigger(_inputCtrl.value);
+    if (commandSuggestions.isEmpty && mention == null) {
+      return const SizedBox.shrink();
+    }
+
+    final fileSuggestions = mention == null
+        ? const <String>[]
+        : _matchingProjectFiles(mention.query);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        key: const Key('chat-composer-suggestions'),
+        color: theme.colorScheme.surfaceContainerHigh,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 220),
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            children: [
+              for (final command in commandSuggestions)
+                ListTile(
+                  dense: true,
+                  visualDensity: VisualDensity.compact,
+                  leading: const Icon(CupertinoIcons.command, size: 18),
+                  title: Text(
+                    '/${command.name}',
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  subtitle: Text(command.description),
+                  onTap: () => _insertSlashCommand(command),
+                ),
+              if (mention != null && _isLoadingProjectFiles)
+                const ListTile(
+                  dense: true,
+                  leading: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  title: Text('Loading project files...'),
+                )
+              else if (mention != null &&
+                  _projectFilesError != null &&
+                  _projectFiles.isEmpty)
+                ListTile(
+                  dense: true,
+                  leading: const Icon(CupertinoIcons.refresh, size: 18),
+                  title: const Text('Could not load project files'),
+                  subtitle: Text(_projectFilesError!),
+                  onTap: _loadProjectFiles,
+                )
+              else if (mention != null && fileSuggestions.isEmpty)
+                ListTile(
+                  dense: true,
+                  leading: const Icon(CupertinoIcons.search, size: 18),
+                  title: Text(
+                    mention.query.isEmpty
+                        ? 'No project files available'
+                        : 'No files match "${mention.query}"',
+                  ),
+                )
+              else if (mention != null)
+                for (final path in fileSuggestions)
+                  ListTile(
+                    key: ValueKey('file-mention-$path'),
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                    leading: const Icon(CupertinoIcons.doc, size: 18),
+                    title: Text(
+                      path,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontFamily: 'monospace'),
+                    ),
+                    onTap: () => _insertFileMention(mention, path),
+                  ),
+              if (mention != null && _projectFilesTruncated)
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: Text(
+                    'Showing matches from the first 5,000 project files.',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChatTab(ThemeData theme) {
+    return Column(
+      children: [
+        // Live Task Statistics Bar (TPS, Context Usage, Duration, Tools)
+        if (_showStatsBar && (_stats.totalTokens > 0 || _isRunning))
+          TaskStatsBar(
+            stats: _stats,
+            onTap: () {
+              showModalBottomSheet(
+                context: context,
+                builder: (ctx) => Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Session Statistics',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      ListTile(
+                        leading: const Icon(
+                          CupertinoIcons.bolt,
+                          color: Colors.blue,
+                        ),
+                        title: const Text('Generation Speed'),
+                        trailing: Text(
+                          _stats.formattedTps,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      ListTile(
+                        leading: const Icon(
+                          CupertinoIcons.gear,
+                          color: Colors.purple,
+                        ),
+                        title: const Text('Context Window Used'),
+                        trailing: Text(
+                          _stats.formattedContextRatio,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      ListTile(
+                        leading: const Icon(CupertinoIcons.clock),
+                        title: const Text('Total Duration'),
+                        trailing: Text(
+                          _stats.formattedDuration,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      ListTile(
+                        leading: const Icon(CupertinoIcons.hammer),
+                        title: const Text('Tool Executions'),
+                        trailing: Text(
+                          '${_stats.toolCallsCount}',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+
+        // Project chat history or Empty State
+        if (_messages.isEmpty)
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  const SizedBox(height: 20),
+                  CircleAvatar(
+                    radius: 36,
+                    backgroundColor: theme.colorScheme.primaryContainer,
+                    child: Icon(
+                      CupertinoIcons.chat_bubble,
+                      size: 40,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'AI Task Harness Ready',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Connected to ${widget.project.name} at ${widget.project.path}',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'Quick Prompts:',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.center,
+                    children: [
+                      ActionChip(
+                        avatar: const Icon(CupertinoIcons.compass, size: 16),
+                        label: const Text('Analyze Project Structure'),
+                        onPressed: () => _sendMessage(
+                          'Analyze this project and explain what it does.',
+                        ),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(CupertinoIcons.play_arrow, size: 16),
+                        label: const Text('Run Tests'),
+                        onPressed: () => _sendMessage(
+                          'Run test suite in this project and report results.',
+                        ),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(
+                          CupertinoIcons.arrow_up_circle,
+                          size: 16,
+                        ),
+                        label: const Text('Git Status'),
+                        onPressed: () => _sendMessage(
+                          'Check git status and summarize modified files.',
+                        ),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(
+                          CupertinoIcons.exclamationmark_circle,
+                          size: 16,
+                        ),
+                        label: const Text('Find Errors & Issues'),
+                        onPressed: () => _sendMessage(
+                          'Check for any syntax or linting errors in the project.',
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          Expanded(
+            child: ListView.builder(
+              controller: _scrollCtrl,
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              itemCount: _messages.length,
+              itemBuilder: (context, index) {
+                return _buildMessageBubble(_messages[index]);
+              },
+            ),
+          ),
+
+        // Live task progress status bar
+        if (_isRunning && _currentStatus != null)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _currentStatus!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(
+                    CupertinoIcons.multiply_circle,
+                    size: 20,
+                    color: Colors.red,
+                  ),
+                  tooltip: 'Stop Task',
+                  onPressed: _stopCurrentTask,
+                ),
+              ],
+            ),
+          ),
+
+        // Chat Input Box
+        SafeArea(
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surface,
+              border: Border(
+                top: BorderSide(
+                  color: theme.colorScheme.outlineVariant.withValues(
+                    alpha: 0.5,
+                  ),
+                ),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildComposerSuggestions(theme),
+                Row(
+                  children: [
+                    ActionChip(
+                      key: const Key('chat-model-picker'),
+                      avatar: const Icon(CupertinoIcons.bolt, size: 14),
+                      label: Text(
+                        _llmConfig.model.split('/').lastOrNull ??
+                            _llmConfig.model,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      onPressed: _isRunning ? null : _showModelPicker,
+                    ),
+                    const Spacer(),
+                    Text(
+                      '/ commands  •  @ files',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        key: const Key('chat-input'),
+                        controller: _inputCtrl,
+                        focusNode: _chatFocusNode,
+                        minLines: 1,
+                        maxLines: 5,
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: InputDecoration(
+                          hintText: 'Ask, use /commands, or mention @files...',
+                          isDense: true,
+                          filled: true,
+                          fillColor: theme.colorScheme.surfaceContainerHighest
+                              .withValues(alpha: 0.5),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(24),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 10,
+                          ),
+                        ),
+                        onSubmitted: (_) => _sendMessage(),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filled(
+                      key: const Key('chat-send-button'),
+                      onPressed: _isRunning
+                          ? _stopCurrentTask
+                          : () => _sendMessage(),
+                      icon: Icon(
+                        _isRunning
+                            ? CupertinoIcons.stop
+                            : CupertinoIcons.arrow_up,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -430,215 +1410,118 @@ class _ProjectChatScreenState extends State<ProjectChatScreen> {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.project.name,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        title: InkWell(
+          onTap: _openConversationHistory,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        widget.project.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(CupertinoIcons.chevron_down, size: 18),
+                  ],
+                ),
+                Text(
+                  _currentSession?.title ?? 'New Conversation',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                    color: theme.colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
-            Text(
-              widget.project.path,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'monospace',
-                color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(CupertinoIcons.bubble_left, size: 20),
+            tooltip: 'All Conversations',
+            onPressed: _openConversationHistory,
+          ),
+          IconButton(
+            icon: const Icon(CupertinoIcons.chat_bubble_2, size: 20),
+            tooltip: 'New Conversation',
+            onPressed: _createNewConversation,
+          ),
+        ],
+        bottom: TabBar(
+          controller: _tabController,
+          labelPadding: const EdgeInsets.symmetric(horizontal: 16),
+          tabs: const [
+            Tab(
+              icon: Tooltip(
+                message: 'Chat',
+                child: Icon(CupertinoIcons.chat_bubble, size: 20),
+              ),
+            ),
+            Tab(
+              icon: Tooltip(
+                message: 'Terminal',
+                child: Icon(CupertinoIcons.command, size: 20),
+              ),
+            ),
+            Tab(
+              icon: Tooltip(
+                message: 'Files',
+                child: Icon(CupertinoIcons.folder, size: 20),
+              ),
+            ),
+            Tab(
+              icon: Tooltip(
+                message: 'Git',
+                child: Icon(CupertinoIcons.doc_plaintext, size: 20),
+              ),
+            ),
+            Tab(
+              icon: Tooltip(
+                message: 'System',
+                child: Icon(CupertinoIcons.heart, size: 20),
               ),
             ),
           ],
         ),
-        actions: [
-          // Model selector chip
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: ActionChip(
-              avatar: const Icon(Icons.bolt, size: 16),
-              label: Text(
-                _llmConfig.model.split('/').lastOrNull ?? _llmConfig.model,
-                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-              ),
-              onPressed: _showModelPicker,
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: 'Clear Chat',
-            onPressed: () {
-              setState(() {
-                _messages.clear();
-              });
-            },
-          ),
-        ],
       ),
-      body: Column(
+      body: TabBarView(
+        controller: _tabController,
         children: [
-          // Project banner / Empty state
-          if (_messages.isEmpty)
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  children: [
-                    const SizedBox(height: 20),
-                    CircleAvatar(
-                      radius: 36,
-                      backgroundColor: theme.colorScheme.primaryContainer,
-                      child: Icon(
-                        Icons.smart_toy_outlined,
-                        size: 40,
-                        color: theme.colorScheme.primary,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'AI Task Harness Ready',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Connected to ${widget.project.name} at ${widget.project.path}',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    const Text(
-                      'Quick Prompts:',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      alignment: WrapAlignment.center,
-                      children: [
-                        ActionChip(
-                          avatar: const Icon(Icons.explore_outlined, size: 16),
-                          label: const Text('Analyze Project Structure'),
-                          onPressed: () => _sendMessage('Analyze this project and explain what it does.'),
-                        ),
-                        ActionChip(
-                          avatar: const Icon(Icons.play_arrow_outlined, size: 16),
-                          label: const Text('Run Tests'),
-                          onPressed: () => _sendMessage('Run test suite in this project and report results.'),
-                        ),
-                        ActionChip(
-                          avatar: const Icon(Icons.commit_outlined, size: 16),
-                          label: const Text('Git Status'),
-                          onPressed: () => _sendMessage('Check git status and summarize modified files.'),
-                        ),
-                        ActionChip(
-                          avatar: const Icon(Icons.bug_report_outlined, size: 16),
-                          label: const Text('Find Errors & Issues'),
-                          onPressed: () => _sendMessage('Check for any syntax or linting errors in the project.'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else
-            Expanded(
-              child: ListView.builder(
-                controller: _scrollCtrl,
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                itemCount: _messages.length,
-                itemBuilder: (context, index) {
-                  return _buildMessageBubble(_messages[index]);
-                },
-              ),
-            ),
-
-          // Live task progress bar
-          if (_isRunning && _currentStatus != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
-              child: Row(
-                children: [
-                  const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      _currentStatus!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.stop_circle_outlined, size: 20, color: Colors.red),
-                    tooltip: 'Stop Task',
-                    onPressed: () {
-                      _chatService.cancel();
-                      setState(() {
-                        _isRunning = false;
-                        _currentStatus = null;
-                      });
-                    },
-                  ),
-                ],
-              ),
-            ),
-
-          // Input area
-          SafeArea(
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surface,
-                border: Border(
-                  top: BorderSide(
-                    color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-                  ),
-                ),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _inputCtrl,
-                      minLines: 1,
-                      maxLines: 5,
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: InputDecoration(
-                        hintText: 'Give a coding task or ask a question...',
-                        isDense: true,
-                        filled: true,
-                        fillColor: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide.none,
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 10,
-                        ),
-                      ),
-                      onSubmitted: (_) => _sendMessage(),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    onPressed: _isRunning ? () => _chatService.cancel() : () => _sendMessage(),
-                    icon: Icon(_isRunning ? Icons.stop : Icons.arrow_upward_rounded),
-                  ),
-                ],
-              ),
-            ),
+          _buildChatTab(theme),
+          ProjectTerminalTab(
+            project: widget.project,
+            backendUrl: _llmConfig.backendUrl,
+            accessToken: _llmConfig.backendAccessToken,
+          ),
+          ProjectFilesTab(
+            project: widget.project,
+            backendUrl: _llmConfig.backendUrl,
+          ),
+          ProjectGitTab(
+            project: widget.project,
+            backendUrl: _llmConfig.backendUrl,
+          ),
+          ProjectSystemTab(
+            backendUrl: _llmConfig.backendUrl,
+            accessToken: _llmConfig.backendAccessToken,
+            stats: _stats,
+            active: _activeTabIndex == 4,
           ),
         ],
       ),

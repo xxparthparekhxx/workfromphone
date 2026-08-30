@@ -1,7 +1,8 @@
 class ProjectDirectory {
   final String name;
   final String path;
-  final String? projectType; // e.g. "flutter", "python", "node", "rust", "go", "git"
+  final String?
+  projectType; // e.g. "flutter", "python", "node", "rust", "go", "git"
   final DateTime lastOpened;
 
   const ProjectDirectory({

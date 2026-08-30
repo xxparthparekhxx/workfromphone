@@ -11,6 +11,8 @@ class Settings(BaseSettings):
 
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    ACCESS_TOKEN: str = ""
+    MAX_UPLOAD_BYTES: int = 512 * 1024 * 1024
 
     # CORS configuration - default allows local frontend/mobile dev
     CORS_ORIGINS: List[str] = [

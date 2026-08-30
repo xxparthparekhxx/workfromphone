@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:workfromphone/models/project_directory.dart';
 import 'package:workfromphone/services/api_service.dart';
 
@@ -101,7 +102,8 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
   void _selectCurrentDirectory() {
     if (_browseResult == null) return;
     final path = _browseResult!.currentPath;
-    final name = path.split('/').where((s) => s.isNotEmpty).lastOrNull ?? 'Project';
+    final name =
+        path.split('/').where((s) => s.isNotEmpty).lastOrNull ?? 'Project';
 
     Navigator.of(context).pop(
       ProjectDirectory(
@@ -122,23 +124,23 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
   Widget _buildProjectTypeBadge(String? type) {
     if (type == null) return const SizedBox.shrink();
     Color color = Colors.blueGrey;
-    IconData icon = Icons.folder;
+    IconData icon = CupertinoIcons.folder;
 
     if (type.contains('flutter') || type.contains('dart')) {
       color = Colors.lightBlue;
       icon = Icons.flutter_dash;
     } else if (type.contains('python')) {
       color = Colors.amber.shade700;
-      icon = Icons.terminal;
+      icon = CupertinoIcons.command;
     } else if (type.contains('node') || type.contains('javascript')) {
       color = Colors.green;
       icon = Icons.javascript;
     } else if (type.contains('rust')) {
       color = Colors.deepOrange;
-      icon = Icons.memory;
+      icon = CupertinoIcons.gear;
     } else if (type.contains('git')) {
       color = Colors.orange;
-      icon = Icons.commit;
+      icon = CupertinoIcons.arrow_up_circle;
     }
 
     return Container(
@@ -185,7 +187,9 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+                color: theme.colorScheme.onSurfaceVariant.withValues(
+                  alpha: 0.4,
+                ),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -195,7 +199,7 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Row(
                 children: [
-                  const Icon(Icons.folder_open_rounded, size: 28),
+                  const Icon(CupertinoIcons.folder_open, size: 28),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -217,7 +221,7 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close),
+                    icon: const Icon(CupertinoIcons.xmark),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
@@ -235,12 +239,16 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   itemCount: _quickPaths!.commonPaths.length,
-                  separatorBuilder: (context, index) => const SizedBox(width: 8),
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(width: 8),
                   itemBuilder: (context, index) {
                     final qp = _quickPaths!.commonPaths[index];
                     final isSelected = qp.path == _currentPath;
                     return ActionChip(
-                      avatar: const Icon(Icons.folder_special, size: 16),
+                      avatar: const Icon(
+                        CupertinoIcons.folder_fill_badge_person_crop,
+                        size: 16,
+                      ),
                       label: Text(qp.name),
                       backgroundColor: isSelected
                           ? theme.colorScheme.primaryContainer
@@ -257,7 +265,7 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
               child: Row(
                 children: [
                   IconButton.filledTonal(
-                    icon: const Icon(Icons.arrow_upward_rounded, size: 20),
+                    icon: const Icon(CupertinoIcons.arrow_up, size: 20),
                     tooltip: 'Parent Folder',
                     onPressed: _browseResult?.parentPath != null
                         ? () => _loadDirectory(_browseResult!.parentPath!)
@@ -267,7 +275,10 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
                   Expanded(
                     child: TextField(
                       controller: _customPathCtrl,
-                      style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontFamily: 'monospace',
+                      ),
                       decoration: InputDecoration(
                         isDense: true,
                         contentPadding: const EdgeInsets.symmetric(
@@ -279,7 +290,10 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
                           borderRadius: BorderRadius.circular(10),
                         ),
                         suffixIcon: IconButton(
-                          icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+                          icon: const Icon(
+                            CupertinoIcons.arrow_right,
+                            size: 18,
+                          ),
                           onPressed: () => _loadDirectory(_customPathCtrl.text),
                         ),
                       ),
@@ -295,7 +309,9 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
               margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
-                color: theme.colorScheme.primaryContainer.withValues(alpha: 0.5),
+                color: theme.colorScheme.primaryContainer.withValues(
+                  alpha: 0.5,
+                ),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
                   color: theme.colorScheme.primary.withValues(alpha: 0.3),
@@ -304,7 +320,7 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
               child: Row(
                 children: [
                   Icon(
-                    Icons.check_circle_outline,
+                    CupertinoIcons.check_mark_circled,
                     color: theme.colorScheme.primary,
                   ),
                   const SizedBox(width: 10),
@@ -324,7 +340,9 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
                             ),
                             const SizedBox(width: 6),
                             if (_browseResult?.isProject == true)
-                              _buildProjectTypeBadge(_browseResult?.projectType),
+                              _buildProjectTypeBadge(
+                                _browseResult?.projectType,
+                              ),
                           ],
                         ),
                         Text(
@@ -342,8 +360,10 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
                   ),
                   const SizedBox(width: 8),
                   FilledButton.icon(
-                    onPressed: _browseResult != null ? _selectCurrentDirectory : null,
-                    icon: const Icon(Icons.check, size: 18),
+                    onPressed: _browseResult != null
+                        ? _selectCurrentDirectory
+                        : null,
+                    icon: const Icon(CupertinoIcons.check_mark, size: 18),
                     label: const Text('Select'),
                   ),
                 ],
@@ -357,80 +377,87 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : _errorMessage != null
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24.0),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                                const SizedBox(height: 12),
-                                Text(
-                                  'Cannot access folder',
-                                  style: theme.textTheme.titleMedium,
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  _errorMessage!,
-                                  textAlign: TextAlign.center,
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: theme.colorScheme.error,
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
-                                OutlinedButton(
-                                  onPressed: () => _loadDirectory(''),
-                                  child: const Text('Go to Home'),
-                                ),
-                              ],
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24.0),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(
+                              CupertinoIcons.exclamationmark_circle,
+                              size: 48,
+                              color: Colors.red,
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'Cannot access folder',
+                              style: theme.textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              _errorMessage!,
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.error,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            OutlinedButton(
+                              onPressed: () => _loadDirectory(''),
+                              child: const Text('Go to Home'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  : dirsOnly.isEmpty
+                  ? const Center(
+                      child: Text('No subfolders found in this directory'),
+                    )
+                  : ListView.builder(
+                      controller: scrollController,
+                      itemCount: dirsOnly.length,
+                      itemBuilder: (context, index) {
+                        final item = dirsOnly[index];
+                        return ListTile(
+                          leading: Icon(
+                            item.isProject
+                                ? CupertinoIcons.folder_fill_badge_person_crop
+                                : CupertinoIcons.folder,
+                            color: item.isProject
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.onSurfaceVariant,
+                          ),
+                          title: Text(
+                            item.name,
+                            style: TextStyle(
+                              fontWeight: item.isProject
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
                             ),
                           ),
-                        )
-                      : dirsOnly.isEmpty
-                          ? const Center(
-                              child: Text('No subfolders found in this directory'),
-                            )
-                          : ListView.builder(
-                              controller: scrollController,
-                              itemCount: dirsOnly.length,
-                              itemBuilder: (context, index) {
-                                final item = dirsOnly[index];
-                                return ListTile(
-                                  leading: Icon(
-                                    item.isProject
-                                        ? Icons.folder_special
-                                        : Icons.folder,
-                                    color: item.isProject
-                                        ? theme.colorScheme.primary
-                                        : theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                  title: Text(
-                                    item.name,
-                                    style: TextStyle(
-                                      fontWeight: item.isProject
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
-                                    ),
-                                  ),
-                                  subtitle: Text(
-                                    item.path,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontSize: 11),
-                                  ),
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      if (item.isProject)
-                                        _buildProjectTypeBadge(item.projectType),
-                                      const SizedBox(width: 4),
-                                      const Icon(Icons.chevron_right, size: 20),
-                                    ],
-                                  ),
-                                  onTap: () => _selectItem(item),
-                                );
-                              },
-                            ),
+                          subtitle: Text(
+                            item.path,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (item.isProject)
+                                _buildProjectTypeBadge(item.projectType),
+                              const SizedBox(width: 4),
+                              const Icon(
+                                CupertinoIcons.chevron_right,
+                                size: 20,
+                              ),
+                            ],
+                          ),
+                          onTap: () => _selectItem(item),
+                        );
+                      },
+                    ),
             ),
           ],
         );

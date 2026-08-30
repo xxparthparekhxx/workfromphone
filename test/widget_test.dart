@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workfromphone/main.dart';
@@ -8,7 +8,9 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('Bottom navigation and Projects / Settings screens smoke test', (WidgetTester tester) async {
+  testWidgets('Bottom navigation and Projects / Settings screens smoke test', (
+    WidgetTester tester,
+  ) async {
     // Build our app and trigger a frame.
     await tester.pumpWidget(const MyApp());
     await tester.pumpAndSettle();
@@ -19,7 +21,7 @@ void main() {
     expect(find.text('Browse & Select Project Directory'), findsOneWidget);
 
     // Switch to Settings tab
-    final settingsNavDestination = find.byIcon(Icons.settings_outlined);
+    final settingsNavDestination = find.byIcon(CupertinoIcons.settings);
     expect(settingsNavDestination, findsOneWidget);
     await tester.tap(settingsNavDestination);
     await tester.pumpAndSettle();
@@ -31,7 +33,7 @@ void main() {
     expect(find.text('Selected Model ID'), findsOneWidget);
 
     // Switch back to Projects tab
-    final projectsNavDestination = find.byIcon(Icons.folder_outlined);
+    final projectsNavDestination = find.byIcon(CupertinoIcons.folder);
     expect(projectsNavDestination, findsOneWidget);
     await tester.tap(projectsNavDestination);
     await tester.pumpAndSettle();

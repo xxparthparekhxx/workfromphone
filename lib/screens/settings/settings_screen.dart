@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:workfromphone/models/backend_profile.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:workfromphone/models/llm_config.dart';
 import 'package:workfromphone/models/model_info.dart';
+import 'package:workfromphone/screens/settings/remote_backend_setup_screen.dart';
 import 'package:workfromphone/services/api_service.dart';
+import 'package:workfromphone/services/remote_setup_service.dart';
 import 'package:workfromphone/services/storage_service.dart';
+import 'package:workfromphone/widgets/model_picker_sheet.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -23,6 +28,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool? _backendOnline;
   bool _isFetchingModels = false;
   List<ModelInfo> _modelsList = [];
+  String _backendAccessToken = '';
+  String _loadedBackendUrl = '';
+  BackendProfile? _activeBackendProfile;
+  bool _isReconnecting = false;
 
   final List<Map<String, String>> _providerPresets = [
     {
@@ -64,26 +73,130 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadSettings() async {
     final cfg = await StorageService.loadLLMConfig();
+    final activeProfile = await StorageService.loadActiveBackendProfile();
     setState(() {
       _backendUrlCtrl.text = cfg.backendUrl;
       _baseUrlCtrl.text = cfg.baseUrl;
       _apiKeyCtrl.text = cfg.apiKey;
       _modelCtrl.text = cfg.model;
       _temperature = cfg.temperature;
+      _backendAccessToken = cfg.backendAccessToken;
+      _loadedBackendUrl = cfg.backendUrl;
+      _activeBackendProfile = activeProfile;
     });
+    ApiService.configureAccessToken(
+      cfg.backendAccessToken,
+      backendUrl: cfg.backendUrl,
+    );
     _testBackendConnection();
   }
 
+  Future<String?> _promptForSshPassword() async {
+    final controller = TextEditingController();
+    final password = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('SSH password required'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          obscureText: true,
+          decoration: InputDecoration(
+            labelText:
+                '${_activeBackendProfile?.username}@'
+                '${_activeBackendProfile?.host}',
+            border: const OutlineInputBorder(),
+          ),
+          onSubmitted: (value) => Navigator.pop(context, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Connect'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return password;
+  }
+
+  Future<void> _reconnectSshTunnel() async {
+    final profile = _activeBackendProfile;
+    if (profile == null ||
+        profile.transport != BackendTransport.sshTunnel ||
+        _isReconnecting) {
+      return;
+    }
+    var password = await StorageService.loadBackendSecret(
+      profile.id,
+      'ssh_password',
+    );
+    password ??= await _promptForSshPassword();
+    if (password == null || password.isEmpty || !mounted) return;
+
+    setState(() => _isReconnecting = true);
+    try {
+      final client = await RemoteSetupService().connectExisting(
+        profile,
+        password: password,
+      );
+      final port = await SshTunnelManager.instance.start(client);
+      final token =
+          await StorageService.loadBackendSecret(profile.id, 'access_token') ??
+          '';
+      final current = await StorageService.loadLLMConfig();
+      final updated = current.copyWith(
+        backendUrl: 'http://127.0.0.1:$port',
+        backendAccessToken: token,
+      );
+      await StorageService.saveLLMConfig(updated);
+      ApiService.configureAccessToken(token, backendUrl: updated.backendUrl);
+      if (!mounted) return;
+      setState(() {
+        _backendUrlCtrl.text = updated.backendUrl;
+        _backendAccessToken = token;
+        _loadedBackendUrl = updated.backendUrl;
+        _backendOnline = true;
+      });
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('SSH reconnection failed: $error'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isReconnecting = false);
+    }
+  }
+
   Future<void> _saveSettings() async {
+    final backendUrl = _backendUrlCtrl.text.trim();
+    final accessToken =
+        backendUrl == _loadedBackendUrl ? _backendAccessToken : '';
     final updated = LLMConfig(
-      backendUrl: _backendUrlCtrl.text.trim(),
+      backendUrl: backendUrl,
       baseUrl: _baseUrlCtrl.text.trim(),
       apiKey: _apiKeyCtrl.text.trim(),
       model: _modelCtrl.text.trim(),
       temperature: _temperature,
+      backendAccessToken: accessToken,
     );
 
     await StorageService.saveLLMConfig(updated);
+    ApiService.configureAccessToken(
+      updated.backendAccessToken,
+      backendUrl: updated.backendUrl,
+    );
+    _backendAccessToken = updated.backendAccessToken;
+    _loadedBackendUrl = updated.backendUrl;
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -170,7 +283,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.save),
+            icon: const Icon(CupertinoIcons.arrow_down_doc),
             tooltip: 'Save Settings',
             onPressed: _saveSettings,
           ),
@@ -180,7 +293,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           // Section 1: PC Backend Connection
-          _buildSectionHeader('PC Backend Connection', Icons.computer),
+          _buildSectionHeader(
+            'PC Backend Connection',
+            CupertinoIcons.desktopcomputer,
+          ),
           Card(
             elevation: 0,
             shape: RoundedRectangleBorder(
@@ -199,7 +315,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     decoration: InputDecoration(
                       labelText: 'FastAPI Backend URL',
                       hintText: 'http://127.0.0.1:8000',
-                      prefixIcon: const Icon(Icons.link),
+                      prefixIcon: const Icon(CupertinoIcons.link),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),
@@ -212,11 +328,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: [
                       ActionChip(
                         label: const Text('127.0.0.1:8000'),
-                        onPressed: () => _backendUrlCtrl.text = 'http://127.0.0.1:8000',
+                        onPressed: () =>
+                            _backendUrlCtrl.text = 'http://127.0.0.1:8000',
                       ),
                       ActionChip(
                         label: const Text('10.0.2.2:8000 (Android Emulator)'),
-                        onPressed: () => _backendUrlCtrl.text = 'http://10.0.2.2:8000',
+                        onPressed: () =>
+                            _backendUrlCtrl.text = 'http://10.0.2.2:8000',
                       ),
                     ],
                   ),
@@ -224,14 +342,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Row(
                     children: [
                       FilledButton.tonalIcon(
-                        onPressed: _isTestingBackend ? null : _testBackendConnection,
+                        onPressed: _isTestingBackend
+                            ? null
+                            : _testBackendConnection,
                         icon: _isTestingBackend
                             ? const SizedBox(
                                 width: 14,
                                 height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
-                            : const Icon(Icons.network_ping, size: 18),
+                            : const Icon(CupertinoIcons.wifi, size: 18),
                         label: const Text('Test Connection'),
                       ),
                       const SizedBox(width: 12),
@@ -239,15 +361,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         Row(
                           children: [
                             Icon(
-                              _backendOnline! ? Icons.check_circle : Icons.cancel,
-                              color: _backendOnline! ? Colors.green : Colors.red,
+                              _backendOnline!
+                                  ? CupertinoIcons.check_mark_circled
+                                  : CupertinoIcons.clear,
+                              color: _backendOnline!
+                                  ? Colors.green
+                                  : Colors.red,
                               size: 18,
                             ),
                             const SizedBox(width: 6),
                             Text(
                               _backendOnline! ? 'Connected' : 'Unreachable',
                               style: TextStyle(
-                                color: _backendOnline! ? Colors.green : Colors.red,
+                                color: _backendOnline!
+                                    ? Colors.green
+                                    : Colors.red,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 13,
                               ),
@@ -256,6 +384,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                     ],
                   ),
+                  const SizedBox(height: 14),
+                  const Divider(),
+                  const SizedBox(height: 6),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const CircleAvatar(
+                      child: Icon(CupertinoIcons.arrow_down_circle),
+                    ),
+                    title: const Text('Set up a Linux computer'),
+                    subtitle: const Text(
+                      'Install or upgrade the backend securely over SSH',
+                    ),
+                    trailing: const Icon(CupertinoIcons.chevron_right),
+                    onTap: () async {
+                      final configured = await Navigator.push<bool>(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const RemoteBackendSetupScreen(),
+                        ),
+                      );
+                      if (configured == true) {
+                        await _loadSettings();
+                      }
+                    },
+                  ),
+                  if (_activeBackendProfile?.transport ==
+                      BackendTransport.sshTunnel)
+                    FilledButton.tonalIcon(
+                      key: const Key('reconnect-ssh-backend'),
+                      onPressed: _isReconnecting ? null : _reconnectSshTunnel,
+                      icon: _isReconnecting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(CupertinoIcons.arrow_uturn_left),
+                      label: Text(
+                        _isReconnecting
+                            ? 'Connecting…'
+                            : 'Reconnect SSH tunnel',
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -264,7 +435,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 20),
 
           // Section 2: LLM Router & Provider Config
-          _buildSectionHeader('LLM Provider & Router', Icons.psychology),
+          _buildSectionHeader(
+            'LLM Provider & Router',
+            CupertinoIcons.lightbulb,
+          ),
           Card(
             elevation: 0,
             shape: RoundedRectangleBorder(
@@ -311,7 +485,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     decoration: InputDecoration(
                       labelText: 'OpenAI / Router Base URL',
                       hintText: 'https://openrouter.ai/api/v1',
-                      prefixIcon: const Icon(Icons.cloud_queue),
+                      prefixIcon: const Icon(CupertinoIcons.cloud),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),
@@ -331,7 +505,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       prefixIcon: const Icon(Icons.key),
                       suffixIcon: IconButton(
                         icon: Icon(
-                          _obscureApiKey ? Icons.visibility : Icons.visibility_off,
+                          _obscureApiKey
+                              ? CupertinoIcons.eye
+                              : CupertinoIcons.eye_slash,
                         ),
                         onPressed: () {
                           setState(() {
@@ -358,7 +534,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           decoration: InputDecoration(
                             labelText: 'Selected Model ID',
                             hintText: 'anthropic/claude-3.5-sonnet',
-                            prefixIcon: const Icon(Icons.smart_toy),
+                            prefixIcon: const Icon(CupertinoIcons.sparkles),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(10),
                             ),
@@ -368,13 +544,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       const SizedBox(width: 8),
                       IconButton.filledTonal(
+                        icon: const Icon(CupertinoIcons.search),
+                        tooltip: 'Search & Pick Model',
+                        onPressed: () {
+                          ModelPickerSheet.show(
+                            context: context,
+                            selectedModelId: _modelCtrl.text,
+                            availableModels: _modelsList,
+                            onRefresh: _fetchModels,
+                            onModelSelected: (m) {
+                              setState(() {
+                                _modelCtrl.text = m.id;
+                              });
+                            },
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton.filledTonal(
                         icon: _isFetchingModels
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
-                            : const Icon(Icons.cloud_download_outlined),
+                            : const Icon(CupertinoIcons.cloud_download),
                         tooltip: 'Fetch Live Models',
                         onPressed: _isFetchingModels ? null : _fetchModels,
                       ),
@@ -383,50 +579,110 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                   // Quick model chips
                   const SizedBox(height: 10),
-                  const Text(
-                    'Recommended Models:',
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                  Row(
+                    children: [
+                      const Text(
+                        'Recommended Models:',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const Spacer(),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                        ),
+                        icon: const Icon(CupertinoIcons.search, size: 14),
+                        label: const Text(
+                          'Browse All',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        onPressed: () {
+                          ModelPickerSheet.show(
+                            context: context,
+                            selectedModelId: _modelCtrl.text,
+                            availableModels: _modelsList,
+                            onRefresh: _fetchModels,
+                            onModelSelected: (m) {
+                              setState(() {
+                                _modelCtrl.text = m.id;
+                              });
+                            },
+                          );
+                        },
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 4),
                   Wrap(
                     spacing: 6,
                     runSpacing: 6,
-                    children: [
-                      'anthropic/claude-3.5-sonnet',
-                      'openai/gpt-4o',
-                      'openai/gpt-4o-mini',
-                      'deepseek/deepseek-chat',
-                      'deepseek/deepseek-r1',
-                      'meta-llama/llama-3.3-70b-instruct',
-                      'google/gemini-2.0-flash-001',
-                    ].map((m) {
-                      final isSelected = _modelCtrl.text == m;
-                      final label = m.split('/').lastOrNull ?? m;
-                      return ActionChip(
-                        avatar: isSelected ? const Icon(Icons.check, size: 14) : null,
-                        label: Text(label),
-                        backgroundColor: isSelected
-                            ? theme.colorScheme.primaryContainer
-                            : null,
-                        onPressed: () {
-                          setState(() {
-                            _modelCtrl.text = m;
-                          });
-                        },
-                      );
-                    }).toList(),
+                    children:
+                        [
+                          'anthropic/claude-3.7-sonnet',
+                          'anthropic/claude-3.5-sonnet',
+                          'meta-llama/llama-3.3-70b-instruct:free',
+                          'deepseek/deepseek-r1:free',
+                          'openai/gpt-4o',
+                          'openai/o3-mini',
+                          'deepseek/deepseek-chat',
+                          'google/gemini-2.0-flash-001',
+                        ].map((m) {
+                          final isSelected = _modelCtrl.text == m;
+                          final isFree = m.contains(':free');
+                          final label = m.split('/').lastOrNull ?? m;
+                          return ActionChip(
+                            avatar: isSelected
+                                ? const Icon(
+                                    CupertinoIcons.check_mark,
+                                    size: 14,
+                                  )
+                                : (isFree
+                                      ? const Icon(
+                                          CupertinoIcons.bolt,
+                                          size: 14,
+                                          color: Colors.green,
+                                        )
+                                      : null),
+                            label: Text(
+                              label,
+                              style: TextStyle(
+                                color: isFree && !isSelected
+                                    ? Colors.green
+                                    : null,
+                                fontWeight: isSelected
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                            backgroundColor: isSelected
+                                ? theme.colorScheme.primaryContainer
+                                : (isFree
+                                      ? Colors.green.withValues(alpha: 0.1)
+                                      : null),
+                            onPressed: () {
+                              setState(() {
+                                _modelCtrl.text = m;
+                              });
+                            },
+                          );
+                        }).toList(),
                   ),
 
                   // If fetched models exist, allow picking
                   if (_modelsList.isNotEmpty) ...[
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
-                      initialValue: _modelsList.any((m) => m.id == _modelCtrl.text)
+                      initialValue:
+                          _modelsList.any((m) => m.id == _modelCtrl.text)
                           ? _modelCtrl.text
                           : null,
                       isExpanded: true,
                       decoration: InputDecoration(
-                        labelText: 'Or choose from fetched models (${_modelsList.length})',
+                        labelText:
+                            'Or choose from fetched models (${_modelsList.length})',
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
                         ),
@@ -487,7 +743,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // Save Button
           FilledButton.icon(
             onPressed: _saveSettings,
-            icon: const Icon(Icons.save),
+            icon: const Icon(CupertinoIcons.arrow_down_doc),
             label: const Text('Save Configuration'),
             style: FilledButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 14),

@@ -426,6 +426,15 @@ class HarnessService:
 
         step = 0
         max_steps = req.max_steps
+        accumulated_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "reasoning_tokens": 0,
+            "cached_tokens": 0,
+            "cost": 0.0,
+        }
+        has_usage_cost = False
 
         yield f"data: {json.dumps({'type': 'status', 'content': f'Connecting to {req.llm_config.model}...'})}\n\n"
 
@@ -438,7 +447,10 @@ class HarnessService:
                     "tools": HARNESS_TOOLS,
                     "temperature": req.llm_config.temperature,
                     "stream": True,
+                    "stream_options": {"include_usage": True},
                 }
+                if req.llm_config.max_tokens is not None:
+                    payload["max_tokens"] = req.llm_config.max_tokens
 
                 try:
                     async with client.stream(
@@ -452,6 +464,7 @@ class HarnessService:
 
                         full_content = ""
                         tool_calls_acc: Dict[int, Dict[str, Any]] = {}
+                        step_usage: Dict[str, Any] | None = None
 
                         async for line in response.aiter_lines():
                             if not line or not line.startswith("data:"):
@@ -462,6 +475,8 @@ class HarnessService:
 
                             try:
                                 chunk_json = json.loads(line_data)
+                                if isinstance(chunk_json.get("usage"), dict):
+                                    step_usage = chunk_json["usage"]
                                 choices = chunk_json.get("choices", [])
                                 if not choices:
                                     continue
@@ -494,6 +509,45 @@ class HarnessService:
 
                             except json.JSONDecodeError:
                                 pass
+
+                    if step_usage is not None:
+                        prompt_tokens = int(step_usage.get("prompt_tokens") or 0)
+                        completion_tokens = int(step_usage.get("completion_tokens") or 0)
+                        total_tokens = int(
+                            step_usage.get("total_tokens")
+                            or prompt_tokens + completion_tokens
+                        )
+                        prompt_details = step_usage.get("prompt_tokens_details") or {}
+                        completion_details = (
+                            step_usage.get("completion_tokens_details") or {}
+                        )
+                        accumulated_usage["prompt_tokens"] += prompt_tokens
+                        accumulated_usage["completion_tokens"] += completion_tokens
+                        accumulated_usage["total_tokens"] += total_tokens
+                        accumulated_usage["cached_tokens"] += int(
+                            prompt_details.get("cached_tokens") or 0
+                        )
+                        accumulated_usage["reasoning_tokens"] += int(
+                            completion_details.get("reasoning_tokens") or 0
+                        )
+                        if step_usage.get("cost") is not None:
+                            accumulated_usage["cost"] += float(step_usage["cost"])
+                            has_usage_cost = True
+
+                        usage_event = {
+                            "type": "usage",
+                            "usage": {
+                                **accumulated_usage,
+                                "cost": (
+                                    accumulated_usage["cost"]
+                                    if has_usage_cost
+                                    else None
+                                ),
+                                "context_tokens": prompt_tokens + completion_tokens,
+                                "exact": True,
+                            },
+                        }
+                        yield f"data: {json.dumps(usage_event)}\n\n"
 
                     # Check if model requested tool calls
                     if tool_calls_acc:

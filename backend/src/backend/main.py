@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.v1.router import api_v1_router
+from backend.core.auth import BearerTokenMiddleware
 from backend.core.config import settings
 
 
@@ -23,6 +24,8 @@ def create_app() -> FastAPI:
         description="FastAPI Backend Server for WorkFromPhone",
         lifespan=lifespan,
     )
+
+    application.add_middleware(BearerTokenMiddleware)
 
     # Configure CORS
     application.add_middleware(
@@ -58,7 +61,7 @@ def start() -> None:
         "backend.main:app",
         host=settings.HOST,
         port=settings.PORT,
-        reload=True,
+        reload=settings.DEBUG,
     )
 
 

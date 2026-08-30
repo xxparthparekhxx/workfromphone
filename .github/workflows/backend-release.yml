@@ -1,0 +1,100 @@
+name: Backend release
+
+on:
+  push:
+    tags:
+      - "backend-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            architecture: x86_64
+          - runner: ubuntu-24.04-arm
+            architecture: aarch64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: Build self-contained backend
+        run: uv run pyinstaller --clean --noconfirm workfromphone-backend.spec
+      - name: Smoke-test binary
+        run: |
+          ACCESS_TOKEN=release-smoke-token PORT=18765 dist/workfromphone-backend &
+          server_pid=$!
+          trap 'kill "$server_pid" || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18765/api/v1/health; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS \
+            -H "Authorization: Bearer release-smoke-token" \
+            http://127.0.0.1:18765/api/v1/system/snapshot
+      - name: Package binary
+        run: |
+          tar -C dist -czf "workfromphone-backend-linux-${{ matrix.architecture }}.tar.gz" workfromphone-backend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-${{ matrix.architecture }}
+          path: backend/workfromphone-backend-linux-${{ matrix.architecture }}.tar.gz
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: backend-*
+          merge-multiple: true
+          path: release
+      - name: Create release manifest
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          release = Path("release")
+          artifacts = {}
+          for architecture in ("x86_64", "aarch64"):
+              name = f"workfromphone-backend-linux-{architecture}.tar.gz"
+              archive = release / name
+              artifacts[architecture] = {
+                  "url": (
+                      f"https://github.com/{os.environ['REPOSITORY']}/releases/"
+                      f"download/{os.environ['TAG']}/{name}"
+                  ),
+                  "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+              }
+          manifest = {
+              "version": os.environ["TAG"].removeprefix("backend-v"),
+              "artifacts": artifacts,
+          }
+          (release / "backend-manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

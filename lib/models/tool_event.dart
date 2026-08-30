@@ -13,6 +13,26 @@ class ToolEvent {
     this.isError = false,
   });
 
+  Map<String, dynamic> toJson() {
+    return {
+      'tool_name': toolName,
+      'args': args,
+      'output': output,
+      'is_executing': isExecuting,
+      'is_error': isError,
+    };
+  }
+
+  factory ToolEvent.fromJson(Map<String, dynamic> json) {
+    return ToolEvent(
+      toolName: json['tool_name'] as String? ?? 'tool',
+      args: (json['args'] as Map<String, dynamic>?) ?? {},
+      output: json['output'] as String?,
+      isExecuting: json['is_executing'] as bool? ?? false,
+      isError: json['is_error'] as bool? ?? false,
+    );
+  }
+
   String get summary {
     switch (toolName) {
       case 'run_terminal_command':

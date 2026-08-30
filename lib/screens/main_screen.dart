@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:workfromphone/screens/projects/projects_screen.dart';
 import 'package:workfromphone/screens/settings/settings_screen.dart';
 
@@ -12,18 +13,12 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
 
-  final List<Widget> _screens = const [
-    ProjectsScreen(),
-    SettingsScreen(),
-  ];
+  final List<Widget> _screens = const [ProjectsScreen(), SettingsScreen()];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _screens,
-      ),
+      body: IndexedStack(index: _currentIndex, children: _screens),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (int index) {
@@ -33,13 +28,13 @@ class _MainScreenState extends State<MainScreen> {
         },
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.folder_outlined),
-            selectedIcon: Icon(Icons.folder),
+            icon: Icon(CupertinoIcons.folder),
+            selectedIcon: Icon(CupertinoIcons.folder),
             label: 'Projects',
           ),
           NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
+            icon: Icon(CupertinoIcons.settings),
+            selectedIcon: Icon(CupertinoIcons.settings),
             label: 'Settings',
           ),
         ],

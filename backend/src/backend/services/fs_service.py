@@ -3,7 +3,27 @@ import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from backend.schemas.fs import BrowseResponse, DirectoryItem, QuickPathsResponse, ValidatePathResponse
+from backend.schemas.fs import (
+    BrowseResponse,
+    DirectoryItem,
+    ProjectFilesResponse,
+    QuickPathsResponse,
+    ValidatePathResponse,
+)
+
+_IGNORED_PROJECT_DIRECTORIES = {
+    ".dart_tool",
+    ".git",
+    ".gradle",
+    ".idea",
+    ".venv",
+    ".vscode",
+    "__pycache__",
+    "build",
+    "dist",
+    "node_modules",
+    "Pods",
+}
 
 
 class FSService:
@@ -178,6 +198,33 @@ class FSService:
             current_workspace=current_workspace,
             common_paths=quick_items,
         )
+
+    @staticmethod
+    def list_project_files(project_path: str, limit: int) -> ProjectFilesResponse:
+        project_root = Path(os.path.expanduser(project_path)).resolve()
+        if not project_root.exists() or not project_root.is_dir():
+            raise FileNotFoundError("Project directory not found")
+
+        files: list[str] = []
+        for current_root, directories, filenames in os.walk(project_root):
+            directories[:] = sorted(
+                (
+                    name
+                    for name in directories
+                    if name not in _IGNORED_PROJECT_DIRECTORIES
+                ),
+                key=str.casefold,
+            )
+            for filename in sorted(filenames, key=str.casefold):
+                path = Path(current_root, filename)
+                files.append(path.relative_to(project_root).as_posix())
+                if len(files) > limit:
+                    return ProjectFilesResponse(
+                        files=files[:limit],
+                        truncated=True,
+                    )
+
+        return ProjectFilesResponse(files=files)
 
 
 fs_service = FSService()

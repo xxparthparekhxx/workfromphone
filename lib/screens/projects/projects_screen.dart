@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:workfromphone/models/llm_config.dart';
 import 'package:workfromphone/models/project_directory.dart';
+import 'package:workfromphone/screens/chat/conversation_history_sheet.dart';
 import 'package:workfromphone/screens/chat/project_chat_screen.dart';
 import 'package:workfromphone/screens/projects/directory_picker_dialog.dart';
 import 'package:workfromphone/services/api_service.dart';
@@ -32,6 +34,10 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     });
 
     final cfg = await StorageService.loadLLMConfig();
+    ApiService.configureAccessToken(
+      cfg.backendAccessToken,
+      backendUrl: cfg.backendUrl,
+    );
     final list = await StorageService.loadRecentProjects();
     final online = await ApiService.testServer(cfg.backendUrl);
 
@@ -62,9 +68,24 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
   void _openChat(ProjectDirectory project) {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ProjectChatScreen(project: project),
-      ),
+      MaterialPageRoute(builder: (_) => ProjectChatScreen(project: project)),
+    );
+  }
+
+  void _openConversations(ProjectDirectory project) {
+    ConversationHistorySheet.show(
+      context,
+      project: project,
+      activeConversationId: null,
+      onSelectConversation: (session) async {
+        await StorageService.saveActiveConversationId(project.path, session.id);
+        if (mounted) {
+          _openChat(project);
+        }
+      },
+      onNewConversation: () {
+        _openChat(project);
+      },
     );
   }
 
@@ -76,23 +97,23 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   Widget _buildProjectTypeBadge(String? type) {
     if (type == null) return const SizedBox.shrink();
     Color color = Colors.blueGrey;
-    IconData icon = Icons.folder;
+    IconData icon = CupertinoIcons.folder;
 
     if (type.contains('flutter') || type.contains('dart')) {
       color = Colors.lightBlue;
       icon = Icons.flutter_dash;
     } else if (type.contains('python')) {
       color = Colors.amber.shade700;
-      icon = Icons.terminal;
+      icon = CupertinoIcons.command;
     } else if (type.contains('node') || type.contains('javascript')) {
       color = Colors.green;
       icon = Icons.javascript;
     } else if (type.contains('rust')) {
       color = Colors.deepOrange;
-      icon = Icons.memory;
+      icon = CupertinoIcons.gear;
     } else if (type.contains('git')) {
       color = Colors.orange;
-      icon = Icons.commit;
+      icon = CupertinoIcons.arrow_up_circle;
     }
 
     return Container(
@@ -124,9 +145,11 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final filtered = _projects
-        .where((p) =>
-            p.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-            p.path.toLowerCase().contains(_searchQuery.toLowerCase()))
+        .where(
+          (p) =>
+              p.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+              p.path.toLowerCase().contains(_searchQuery.toLowerCase()),
+        )
         .toList();
 
     return Scaffold(
@@ -176,12 +199,17 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                       margin: const EdgeInsets.only(bottom: 16),
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: theme.colorScheme.errorContainer.withValues(alpha: 0.7),
+                        color: theme.colorScheme.errorContainer.withValues(
+                          alpha: 0.7,
+                        ),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.wifi_off, color: theme.colorScheme.error),
+                          Icon(
+                            CupertinoIcons.wifi_slash,
+                            color: theme.colorScheme.error,
+                          ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
@@ -212,7 +240,9 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                   // Hero Action Card: Pick project
                   Card(
                     elevation: 0,
-                    color: theme.colorScheme.primaryContainer.withValues(alpha: 0.5),
+                    color: theme.colorScheme.primaryContainer.withValues(
+                      alpha: 0.5,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
                       side: BorderSide(
@@ -229,7 +259,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                               CircleAvatar(
                                 backgroundColor: theme.colorScheme.primary,
                                 child: const Icon(
-                                  Icons.add_to_photos_rounded,
+                                  CupertinoIcons.plus_circle,
                                   color: Colors.white,
                                 ),
                               ),
@@ -240,15 +270,19 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                                   children: [
                                     Text(
                                       'Work on PC Project',
-                                      style: theme.textTheme.titleMedium?.copyWith(
-                                        fontWeight: FontWeight.bold,
-                                      ),
+                                      style: theme.textTheme.titleMedium
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.bold,
+                                          ),
                                     ),
                                     Text(
                                       'Select any project root folder on your computer to start chat and tasks.',
-                                      style: theme.textTheme.bodySmall?.copyWith(
-                                        color: theme.colorScheme.onSurfaceVariant,
-                                      ),
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                            color: theme
+                                                .colorScheme
+                                                .onSurfaceVariant,
+                                          ),
                                     ),
                                   ],
                                 ),
@@ -260,8 +294,10 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                             width: double.infinity,
                             child: FilledButton.icon(
                               onPressed: _pickDirectory,
-                              icon: const Icon(Icons.folder_open_rounded),
-                              label: const Text('Browse & Select Project Directory'),
+                              icon: const Icon(CupertinoIcons.folder_open),
+                              label: const Text(
+                                'Browse & Select Project Directory',
+                              ),
                             ),
                           ),
                         ],
@@ -277,7 +313,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                       decoration: InputDecoration(
                         isDense: true,
                         hintText: 'Search recent projects...',
-                        prefixIcon: const Icon(Icons.search, size: 20),
+                        prefixIcon: const Icon(CupertinoIcons.search, size: 20),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
@@ -323,9 +359,10 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                         child: Column(
                           children: [
                             Icon(
-                              Icons.folder_open_outlined,
+                              CupertinoIcons.folder_open,
                               size: 56,
-                              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                              color: theme.colorScheme.onSurfaceVariant
+                                  .withValues(alpha: 0.5),
                             ),
                             const SizedBox(height: 12),
                             Text(
@@ -347,7 +384,9 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14),
                           side: BorderSide(
-                            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+                            color: theme.colorScheme.outlineVariant.withValues(
+                              alpha: 0.5,
+                            ),
                           ),
                         ),
                         child: ListTile(
@@ -356,9 +395,10 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                             vertical: 6,
                           ),
                           leading: CircleAvatar(
-                            backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                            backgroundColor:
+                                theme.colorScheme.surfaceContainerHighest,
                             child: Icon(
-                              Icons.terminal_rounded,
+                              CupertinoIcons.command,
                               color: theme.colorScheme.primary,
                             ),
                           ),
@@ -393,15 +433,23 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               IconButton(
-                                icon: const Icon(Icons.chat_bubble_outline, size: 20),
-                                tooltip: 'Open Chat',
-                                onPressed: () => _openChat(project),
+                                icon: const Icon(
+                                  CupertinoIcons.bubble_left,
+                                  size: 20,
+                                ),
+                                tooltip: 'Conversations',
+                                onPressed: () => _openConversations(project),
                               ),
                               PopupMenuButton<String>(
-                                icon: const Icon(Icons.more_vert, size: 20),
+                                icon: const Icon(
+                                  CupertinoIcons.ellipsis,
+                                  size: 20,
+                                ),
                                 onSelected: (action) {
                                   if (action == 'chat') {
                                     _openChat(project);
+                                  } else if (action == 'conversations') {
+                                    _openConversations(project);
                                   } else if (action == 'remove') {
                                     _removeProject(project);
                                   }
@@ -411,9 +459,25 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                                     value: 'chat',
                                     child: Row(
                                       children: [
-                                        Icon(Icons.chat_outlined, size: 18),
+                                        Icon(
+                                          CupertinoIcons.chat_bubble,
+                                          size: 18,
+                                        ),
                                         SizedBox(width: 8),
-                                        Text('Open Chat Harness'),
+                                        Text('Open Workspace'),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'conversations',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          CupertinoIcons.bubble_left,
+                                          size: 18,
+                                        ),
+                                        SizedBox(width: 8),
+                                        Text('All Conversations'),
                                       ],
                                     ),
                                   ),
@@ -421,9 +485,16 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                                     value: 'remove',
                                     child: Row(
                                       children: [
-                                        Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                                        Icon(
+                                          CupertinoIcons.trash,
+                                          size: 18,
+                                          color: Colors.red,
+                                        ),
                                         SizedBox(width: 8),
-                                        Text('Remove', style: TextStyle(color: Colors.red)),
+                                        Text(
+                                          'Remove',
+                                          style: TextStyle(color: Colors.red),
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -440,7 +511,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _pickDirectory,
-        icon: const Icon(Icons.add),
+        icon: const Icon(CupertinoIcons.add),
         label: const Text('Add Project'),
       ),
     );
