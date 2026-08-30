@@ -9,12 +9,13 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
     DEBUG: bool = False
 
-    HOST: str = "0.0.0.0"
+    HOST: str = "127.0.0.1"
     PORT: int = 8000
     ACCESS_TOKEN: str = ""
     MAX_UPLOAD_BYTES: int = 512 * 1024 * 1024
 
-    # CORS configuration - default allows local frontend/mobile dev
+    # CORS configuration - default allows local frontend/mobile dev.
+    # Never add "*" here: browsers would then let any site reach this backend.
     CORS_ORIGINS: List[str] = [
         "http://localhost",
         "http://localhost:3000",
@@ -22,7 +23,6 @@ class Settings(BaseSettings):
         "http://127.0.0.1",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:8080",
-        "*",  # Allow all for development; restrict in production
     ]
 
     model_config = SettingsConfigDict(

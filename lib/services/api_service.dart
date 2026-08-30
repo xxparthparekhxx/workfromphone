@@ -148,18 +148,54 @@ class ApiService {
     _accessToken = token.trim();
     _authenticatedOrigin = backendUrl == null || backendUrl.trim().isEmpty
         ? ''
-        : Uri.parse(cleanUrl(backendUrl)).origin;
+        : _originOf(Uri.parse(cleanUrl(backendUrl)));
+  }
+
+  /// The comparable origin of [uri], or `''` when it has none.
+  ///
+  /// `ws`/`wss` are folded onto `http`/`https` so a WebSocket endpoint is
+  /// matched against the same configured origin as the REST endpoints, and a
+  /// URL without a usable scheme or host never matches anything.
+  static String _originOf(Uri uri) {
+    final normalized = switch (uri.scheme) {
+      'ws' => uri.replace(scheme: 'http'),
+      'wss' => uri.replace(scheme: 'https'),
+      _ => uri,
+    };
+    try {
+      return normalized.origin;
+    } on StateError {
+      return '';
+    }
+  }
+
+  /// Whether the configured backend token may be sent to [uri].
+  ///
+  /// The token is scoped to the origin it was configured for, so it is never
+  /// forwarded to another host after the backend URL changes.
+  static bool _mayAuthenticate(Uri uri) {
+    if (_accessToken.isEmpty || _authenticatedOrigin.isEmpty) return false;
+    return _originOf(uri) == _authenticatedOrigin;
   }
 
   static Map<String, String> headers({bool json = false, Uri? uri}) {
-    final maySendToken =
-        _accessToken.isNotEmpty &&
-        uri != null &&
-        uri.origin == _authenticatedOrigin;
+    final maySendToken = uri != null && _mayAuthenticate(uri);
     return {
       if (json) 'Content-Type': 'application/json',
       if (maySendToken) 'Authorization': 'Bearer $_accessToken',
     };
+  }
+
+  /// Handshake headers for a WebSocket session connecting to [uri].
+  ///
+  /// [token] is only attached when [uri] targets the currently configured
+  /// backend origin, so a session left over from a previous backend URL
+  /// cannot leak its token to a new host.
+  static Map<String, String> webSocketAuthHeaders(Uri uri, String token) {
+    final trimmed = token.trim();
+    if (trimmed.isEmpty || _authenticatedOrigin.isEmpty) return const {};
+    if (_originOf(uri) != _authenticatedOrigin) return const {};
+    return {'Authorization': 'Bearer $trimmed'};
   }
 
   static Future<http.Response> _get(Uri uri) {

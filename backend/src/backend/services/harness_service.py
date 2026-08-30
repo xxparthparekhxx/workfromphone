@@ -7,6 +7,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
 
+from backend.services.terminal_service import terminate_process_group
 from backend.schemas.llm import (
     ChatMessage,
     ChatTaskRequest,
@@ -167,6 +168,7 @@ class HarnessService:
                     cwd=str(project_root),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    start_new_session=True,
                 )
                 try:
                     stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=90.0)
@@ -185,7 +187,7 @@ class HarnessService:
                         result.append("(Command executed successfully with no output)")
                     return "\n".join(result)
                 except asyncio.TimeoutError:
-                    process.kill()
+                    await terminate_process_group(process)
                     return "Error: Command timed out after 90 seconds."
 
             elif tool_name == "read_file":
@@ -261,16 +263,39 @@ class HarnessService:
                 if not query:
                     return "Error: Query cannot be empty."
 
-                # Use ripgrep or python fallback
-                cmd = f"git grep -n -I {json.dumps(query)} 2>/dev/null || grep -rn --exclude-dir='.git' --exclude-dir='node_modules' --exclude-dir='.venv' {json.dumps(query)} ."
-                process = await asyncio.create_subprocess_shell(
-                    cmd,
-                    cwd=str(project_root),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+                # Run the search without a shell: the query is model-supplied,
+                # and interpolating it into a command line would let it break
+                # out into arbitrary shell syntax. `-e` also keeps a query
+                # starting with "-" from being read as an option.
+                async def run_search(command: List[str]) -> tuple[int, str]:
+                    process = await asyncio.create_subprocess_exec(
+                        *command,
+                        cwd=str(project_root),
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    stdout, _ = await process.communicate()
+                    return (
+                        process.returncode or 0,
+                        stdout.decode("utf-8", errors="replace").strip(),
+                    )
+
+                code, out = await run_search(
+                    ["git", "grep", "-n", "-I", "-e", query],
                 )
-                stdout, _ = await process.communicate()
-                out = stdout.decode("utf-8", errors="replace").strip()
+                if code != 0:
+                    _, out = await run_search(
+                        [
+                            "grep",
+                            "-rn",
+                            "--exclude-dir=.git",
+                            "--exclude-dir=node_modules",
+                            "--exclude-dir=.venv",
+                            "-e",
+                            query,
+                            ".",
+                        ],
+                    )
                 return out if out else f"No matches found for '{query}'."
 
             else:

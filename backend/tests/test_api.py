@@ -15,6 +15,7 @@ from backend.services.harness_service import harness_service
 from backend.services.terminal_service import terminal_service
 
 harness_service_module = import_module("backend.services.harness_service")
+main_module = import_module("backend.main")
 
 client = TestClient(app)
 
@@ -495,3 +496,138 @@ def test_fs_binary_upload_and_download(tmp_path: Path):
         },
     )
     assert traversal.status_code == 400
+
+
+def test_cors_does_not_grant_arbitrary_origins():
+    resp = client.get(
+        "/api/v1/health",
+        headers={"Origin": "https://evil.example"},
+    )
+    assert resp.status_code == 200
+    assert "access-control-allow-origin" not in resp.headers
+    assert "access-control-allow-credentials" not in resp.headers
+
+    preflight = client.options(
+        "/api/v1/terminal/run",
+        headers={
+            "Origin": "https://evil.example",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert preflight.headers.get("access-control-allow-origin") != (
+        "https://evil.example"
+    )
+
+    assert "*" not in main_module.resolve_cors_origins()
+    assert "*" not in settings.CORS_ORIGINS
+
+
+def test_wildcard_cors_origin_is_stripped(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        settings,
+        "CORS_ORIGINS",
+        ["http://localhost:3000", "*"],
+    )
+    assert main_module.resolve_cors_origins() == ["http://localhost:3000"]
+
+
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("127.0.0.1", True),
+        ("localhost", True),
+        ("::1", True),
+        ("[::1]", True),
+        ("0.0.0.0", False),
+        ("192.168.1.10", False),
+        ("example.com", False),
+    ],
+)
+def test_is_loopback_host(host: str, expected: bool):
+    assert main_module.is_loopback_host(host) is expected
+
+
+def test_public_bind_without_access_token_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings, "HOST", "0.0.0.0")
+    monkeypatch.setattr(settings, "ACCESS_TOKEN", "")
+    with pytest.raises(RuntimeError, match="ACCESS_TOKEN"):
+        main_module.create_app()
+
+    # A token, or staying on loopback, makes the same bind acceptable.
+    monkeypatch.setattr(settings, "ACCESS_TOKEN", "token")
+    main_module.verify_network_exposure()
+    monkeypatch.setattr(settings, "ACCESS_TOKEN", "")
+    monkeypatch.setattr(settings, "HOST", "127.0.0.1")
+    main_module.verify_network_exposure()
+
+
+def test_fs_errors_keep_their_status_codes(tmp_path: Path):
+    missing = client.get(
+        "/api/v1/fs/file",
+        params={"project_path": str(tmp_path), "relative_path": "nope.txt"},
+    )
+    assert missing.status_code == 404
+
+    traversal = client.get(
+        "/api/v1/fs/file",
+        params={
+            "project_path": str(tmp_path),
+            "relative_path": "../../etc/passwd",
+        },
+    )
+    assert traversal.status_code == 400
+
+    delete_missing = client.request(
+        "DELETE",
+        "/api/v1/fs/file",
+        json={"project_path": str(tmp_path), "relative_path": "nope.txt"},
+    )
+    assert delete_missing.status_code == 404
+
+    delete_root = client.request(
+        "DELETE",
+        "/api/v1/fs/file",
+        json={"project_path": str(tmp_path), "relative_path": "."},
+    )
+    assert delete_root.status_code == 400
+    assert tmp_path.is_dir()
+
+
+def test_search_project_does_not_execute_shell_metacharacters(tmp_path: Path):
+    (tmp_path / "notes.txt").write_text("harmless content\n", encoding="utf-8")
+    marker = tmp_path / "injected.txt"
+
+    output = asyncio.run(
+        harness_service.execute_tool(
+            tmp_path,
+            "search_project",
+            {"query": f"`touch {marker}`"},
+        ),
+    )
+
+    assert not marker.exists(), "search query escaped into the shell"
+    assert "No matches found" in output
+
+    literal = asyncio.run(
+        harness_service.execute_tool(
+            tmp_path,
+            "search_project",
+            {"query": "harmless"},
+        ),
+    )
+    assert "notes.txt" in literal
+
+
+def test_search_project_accepts_a_query_starting_with_a_dash(tmp_path: Path):
+    (tmp_path / "flags.txt").write_text("value --verbose here\n", encoding="utf-8")
+
+    output = asyncio.run(
+        harness_service.execute_tool(
+            tmp_path,
+            "search_project",
+            {"query": "--verbose"},
+        ),
+    )
+    assert "flags.txt" in output

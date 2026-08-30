@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:workfromphone/services/api_service.dart';
 
 enum TerminalConnectionState { disconnected, connecting, connected, exited }
 
@@ -72,12 +73,10 @@ class TerminalSession {
     if (_isDisposed || generation != _generation) return;
 
     try {
-      final wsUrl = _buildWsUrl();
+      final wsUri = Uri.parse(_buildWsUrl());
       final channel = IOWebSocketChannel.connect(
-        Uri.parse(wsUrl),
-        headers: {
-          if (accessToken.isNotEmpty) 'Authorization': 'Bearer $accessToken',
-        },
+        wsUri,
+        headers: ApiService.webSocketAuthHeaders(wsUri, accessToken),
       );
       _channel = channel;
       _subscription = channel.stream.listen(

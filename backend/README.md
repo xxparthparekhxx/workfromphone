@@ -10,7 +10,7 @@ FastAPI server for the WorkFromPhone project.
 - **Optional Bearer Authentication**: Protects every capability endpoint when `ACCESS_TOKEN` is set.
 - **Pydantic v2**: Strict type safety, validation, and serialization.
 - **Pydantic Settings**: Centralized environment variable management (`.env`).
-- **CORS Middleware**: Pre-configured for Flutter web/mobile/desktop development.
+- **CORS Middleware**: Pre-configured with explicit local development origins.
 - **Modular Structure**: Organized by `core`, `schemas`, `api/v1`.
 - **Package Management**: Powered by [`uv`](https://github.com/astral-sh/uv) (fast Python package manager).
 
@@ -58,16 +58,21 @@ cd backend
 
 #### Run the development server with auto-reload:
 ```bash
-uv run uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 or simply:
 ```bash
 uv run backend
 ```
 
-For a network-accessible development server, set a strong `ACCESS_TOKEN`.
-Release installations created by the Flutter setup wizard bind to
-`127.0.0.1` and are reached through SSH or Cloudflare Tunnel.
+The server binds `127.0.0.1` by default. Binding any other interface requires
+a strong `ACCESS_TOKEN`: without one the backend refuses to start, because
+every capability route — including terminal command execution — would be
+reachable unauthenticated. Release installations created by the Flutter setup
+wizard bind to `127.0.0.1` and are reached through SSH or Cloudflare Tunnel.
+
+`CORS_ORIGINS` must list explicit origins. A `"*"` entry is stripped at
+startup, since it would let any website a user visits reach this backend.
 
 ---
 
@@ -100,7 +105,7 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 ---

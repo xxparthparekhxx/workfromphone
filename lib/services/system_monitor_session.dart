@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:workfromphone/models/system_snapshot.dart';
+import 'package:workfromphone/services/api_service.dart';
 
 enum SystemMonitorState { disconnected, connecting, connected }
 
@@ -55,13 +56,10 @@ class SystemMonitorSession {
 
     onStateChange(SystemMonitorState.connecting);
     try {
-      final headers = <String, dynamic>{};
-      if (accessToken?.isNotEmpty == true) {
-        headers['Authorization'] = 'Bearer $accessToken';
-      }
+      final uri = _webSocketUri();
       final channel = IOWebSocketChannel.connect(
-        _webSocketUri(),
-        headers: headers,
+        uri,
+        headers: ApiService.webSocketAuthHeaders(uri, accessToken ?? ''),
       );
       _channel = channel;
       _subscription = channel.stream.listen(

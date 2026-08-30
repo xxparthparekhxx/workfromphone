@@ -100,6 +100,9 @@ async def read_file(
             "total_lines": len(lines),
             "content": content,
         }
+    except HTTPException:
+        # Deliberate 4xx responses must not be re-wrapped as a 500 below.
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid path traversal outside project root")
     except Exception as e:
@@ -123,6 +126,9 @@ async def write_file(req: WriteFileRequest) -> FileActionResponse:
             path=req.relative_path,
             size_bytes=len(req.content.encode("utf-8")),
         )
+    except HTTPException:
+        # Deliberate 4xx responses must not be re-wrapped as a 500 below.
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid path traversal outside project root")
     except Exception as e:
@@ -248,6 +254,9 @@ async def create_item(req: CreateItemRequest) -> FileActionResponse:
                 path=req.relative_path,
                 size_bytes=0,
             )
+    except HTTPException:
+        # Deliberate 4xx responses must not be re-wrapped as a 500 below.
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid path traversal outside project root")
     except Exception as e:
@@ -277,6 +286,9 @@ async def delete_item(req: DeleteItemRequest) -> FileActionResponse:
             message="Deleted successfully",
             path=req.relative_path,
         )
+    except HTTPException:
+        # Deliberate 4xx responses must not be re-wrapped as a 500 below.
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid path traversal outside project root")
     except Exception as e:

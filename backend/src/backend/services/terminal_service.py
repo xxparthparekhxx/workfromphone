@@ -15,6 +15,27 @@ from fastapi import WebSocket, WebSocketDisconnect
 from backend.schemas.terminal import TerminalRunRequest, TerminalRunResponse
 
 
+async def terminate_process_group(process: asyncio.subprocess.Process) -> None:
+    """Kill a session leader and every process it spawned.
+
+    Requires the process to have been started with `start_new_session=True`
+    (or to have called `setsid` itself), so that its pid is also its process
+    group id. Killing only the process would orphan its children.
+    """
+    if process.returncode is not None:
+        return
+
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGTERM)
+
+    try:
+        await asyncio.wait_for(process.wait(), timeout=1)
+    except asyncio.TimeoutError:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        await process.wait()
+
+
 class TerminalService:
     _DEFAULT_COLS = 80
     _DEFAULT_ROWS = 24
@@ -65,21 +86,6 @@ class TerminalService:
             return configured_shell
         return "/bin/bash"
 
-    @staticmethod
-    async def _terminate_process(process: asyncio.subprocess.Process) -> None:
-        if process.returncode is not None:
-            return
-
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGTERM)
-
-        try:
-            await asyncio.wait_for(process.wait(), timeout=1)
-        except asyncio.TimeoutError:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            await process.wait()
-
     @classmethod
     async def run_command(cls, req: TerminalRunRequest) -> TerminalRunResponse:
         project_root = Path(os.path.expanduser(req.project_path)).resolve()
@@ -100,6 +106,7 @@ class TerminalService:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=cls._get_process_env(),
+            start_new_session=True,
         )
 
         timed_out = False
@@ -112,7 +119,7 @@ class TerminalService:
             err_str = stderr.decode("utf-8", errors="replace")
             exit_code = process.returncode if process.returncode is not None else 0
         except asyncio.TimeoutError:
-            process.kill()
+            await terminate_process_group(process)
             timed_out = True
             out_str = ""
             err_str = f"Command timed out after {req.timeout_seconds} seconds."
@@ -250,7 +257,7 @@ class TerminalService:
                 await websocket.send_json({"type": "error", "error": str(exc)})
         finally:
             if process is not None:
-                await cls._terminate_process(process)
+                await terminate_process_group(process)
             if master_fd is not None:
                 with contextlib.suppress(OSError):
                     os.close(master_fd)
