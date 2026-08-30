@@ -1,12 +1,14 @@
 import asyncio
 import json
 import os
+import random
 import re
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
 
+from backend.services.preview_service import preview_registry
 from backend.services.terminal_service import terminate_process_group
 from backend.schemas.llm import (
     ChatMessage,
@@ -140,10 +142,225 @@ HARNESS_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "register_preview",
+            "description": (
+                "Register a running local dev/preview server so the user can "
+                "open it in the in-app browser. Call this AFTER starting a "
+                "long-running HTTP server with run_terminal_command (e.g. "
+                "`npm run dev`, `python -m http.server 8000`, "
+                "`flutter run -d web-server --web-port=8080`). The "
+                "registered port becomes immediately available as a "
+                "previewable target with SPA-rewrite support."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "integer",
+                        "description": "Loopback TCP port the server is listening on.",
+                    },
+                    "label": {
+                        "type": "string",
+                        "description": (
+                            "Short human-readable label (e.g. 'Vite dev "
+                            "server', 'Static demo')."
+                        ),
+                    },
+                    "base_path": {
+                        "type": "string",
+                        "description": (
+                            "Optional URL prefix the app is served under "
+                            "(e.g. '/my-app/'). Leave empty for root."
+                        ),
+                    },
+                    "id": {
+                        "type": "string",
+                        "description": (
+                            "Optional explicit id; defaults to a stable id "
+                            "derived from project_path + port."
+                        ),
+                    },
+                },
+                "required": ["port", "label"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "unregister_preview",
+            "description": (
+                "Remove a previously registered preview target when the "
+                "underlying server has been stopped, or when the user no "
+                "longer wants it listed."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": (
+                            "Identifier returned by register_preview. If "
+                            "omitted, every preview registered for the "
+                            "current project is removed."
+                        ),
+                    },
+                    "all": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, remove every preview registered for "
+                            "the current project. Overrides `id`."
+                        ),
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "task_completed",
+            "description": (
+                "Call this tool when you have fully accomplished the user's task, "
+                "verified your changes with terminal commands or tests, and are ready "
+                "to conclude the session. Provide a final summary of what was accomplished."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "Summary of the completed work, changes made, and verification results.",
+                    },
+                },
+                "required": ["summary"],
+            },
+        },
+    },
 ]
 
 
 class HarnessService:
+    MAX_RETRIES: int = 5
+    INITIAL_BACKOFF_SECONDS: float = 1.0
+    BACKOFF_FACTOR: float = 2.0
+    MAX_BACKOFF_SECONDS: float = 30.0
+
+    @classmethod
+    def _extract_text_tool_calls(cls, text: str) -> List[Dict[str, Any]]:
+        """
+        Extracts tool calls from raw LLM text when open models (e.g. DeepSeek R1,
+        Qwen 2.5 Coder, Llama 3.3) embed tool calls in text/XML format instead of
+        native OpenAI tool_calls delta.
+        """
+        valid_tool_names = {t["function"]["name"] for t in HARNESS_TOOLS}
+        extracted: List[Dict[str, Any]] = []
+        call_idx = 0
+
+        # Pattern 1: <function=tool_name>...</function>
+        xml_func_pattern = re.compile(
+            r"<function=([a-zA-Z0-9_-]+)>\s*(.*?)\s*</function>",
+            re.DOTALL | re.IGNORECASE,
+        )
+        for match in xml_func_pattern.finditer(text):
+            tool_name = match.group(1).strip()
+            raw_args = match.group(2).strip()
+            if tool_name in valid_tool_names:
+                extracted.append({
+                    "id": f"call_text_{call_idx}",
+                    "type": "function",
+                    "function": {"name": tool_name, "arguments": raw_args},
+                })
+                call_idx += 1
+
+        if extracted:
+            return extracted
+
+        # Pattern 2: <tool_call>\s*{"name": ..., "arguments": ...}\s*</tool_call>
+        tool_tag_pattern = re.compile(
+            r"<tool_call>\s*(.*?)\s*</tool_call>",
+            re.DOTALL | re.IGNORECASE,
+        )
+        for match in tool_tag_pattern.finditer(text):
+            raw_json = match.group(1).strip()
+            try:
+                data = json.loads(raw_json)
+                tool_name = data.get("name") or data.get("tool") or data.get("function")
+                args = data.get("arguments") or data.get("args") or data.get("parameters") or {}
+                if tool_name in valid_tool_names:
+                    args_str = json.dumps(args) if isinstance(args, dict) else str(args)
+                    extracted.append({
+                        "id": f"call_text_{call_idx}",
+                        "type": "function",
+                        "function": {"name": tool_name, "arguments": args_str},
+                    })
+                    call_idx += 1
+            except json.JSONDecodeError:
+                pass
+
+        if extracted:
+            return extracted
+
+        # Pattern 3: ```tool_call ... ``` or ```json with {"tool" or "name" or "action": ...}
+        code_block_pattern = re.compile(
+            r"```(?:tool_call|json|function_call)?\s*(\{.*?\})\s*```",
+            re.DOTALL,
+        )
+        for match in code_block_pattern.finditer(text):
+            raw_json = match.group(1).strip()
+            try:
+                data = json.loads(raw_json)
+                tool_name = data.get("name") or data.get("tool") or data.get("action") or data.get("function")
+                args = data.get("arguments") or data.get("args") or data.get("parameters") or data.get("action_input") or {}
+                if tool_name in valid_tool_names:
+                    args_str = json.dumps(args) if isinstance(args, dict) else str(args)
+                    extracted.append({
+                        "id": f"call_text_{call_idx}",
+                        "type": "function",
+                        "function": {"name": tool_name, "arguments": args_str},
+                    })
+                    call_idx += 1
+            except json.JSONDecodeError:
+                pass
+
+        return extracted
+
+    @classmethod
+    def _parse_retry_after(cls, raw: Optional[str]) -> Optional[float]:
+        if not raw:
+            return None
+        try:
+            val = float(raw.strip())
+            return val if val > 0 else None
+        except (ValueError, TypeError):
+            pass
+        try:
+            from datetime import datetime, timezone
+            from email.utils import parsedate_to_datetime
+
+            dt = parsedate_to_datetime(raw)
+            now = datetime.now(timezone.utc)
+            diff = (dt - now).total_seconds()
+            return max(0.0, diff) if diff > 0 else None
+        except Exception:
+            return None
+
+    @classmethod
+    def _calculate_backoff(
+        cls,
+        attempt: int,
+        retry_after: Optional[float] = None,
+    ) -> float:
+        calc_delay = cls.INITIAL_BACKOFF_SECONDS * (cls.BACKOFF_FACTOR ** attempt)
+        jitter = random.uniform(0, min(0.5, calc_delay * 0.25))
+        delay = min(calc_delay + jitter, cls.MAX_BACKOFF_SECONDS)
+        if retry_after is not None and retry_after > 0:
+            delay = min(max(delay, retry_after), cls.MAX_BACKOFF_SECONDS)
+        return delay
+
     @staticmethod
     def _sanitize_path(project_root: Path, relative_path_str: str) -> Path:
         resolved = (project_root / relative_path_str.strip()).resolve()
@@ -298,6 +515,56 @@ class HarnessService:
                     )
                 return out if out else f"No matches found for '{query}'."
 
+            elif tool_name == "register_preview":
+                port = args.get("port")
+                label = args.get("label")
+                if not isinstance(port, int) or not (1 <= port <= 65535):
+                    return "Error: 'port' must be an integer between 1 and 65535."
+                if not isinstance(label, str) or not label.strip():
+                    return "Error: 'label' is required and must be non-empty."
+                base_path = args.get("base_path") or ""
+                if not isinstance(base_path, str):
+                    return "Error: 'base_path' must be a string."
+                explicit_id = args.get("id")
+                if explicit_id is not None and not isinstance(explicit_id, str):
+                    return "Error: 'id' must be a string when provided."
+
+                entry = await preview_registry.register(
+                    project_path=str(project_root),
+                    port=port,
+                    label=label,
+                    base_path=base_path,
+                    source="llm",
+                    entry_id=explicit_id,
+                )
+                return (
+                    f"Registered preview '{entry.label}' on port {entry.port} "
+                    f"with id {entry.id}. The user can now open it in the "
+                    "in-app browser."
+                )
+
+            elif tool_name == "unregister_preview":
+                remove_all = bool(args.get("all"))
+                target_id = args.get("id")
+                if remove_all:
+                    removed = await preview_registry.clear_project(str(project_root))
+                    return f"Removed {removed} preview registration(s) for the current project."
+
+                if not isinstance(target_id, str) or not target_id:
+                    return "Error: either 'id' or 'all: true' must be provided."
+
+                removed = await preview_registry.unregister(target_id)
+                if not removed:
+                    return (
+                        f"Error: no preview registered with id '{target_id}'. "
+                        "It may have already been removed."
+                    )
+                return f"Removed preview '{target_id}'."
+
+            elif tool_name == "task_completed":
+                summary = args.get("summary") or "Task completed."
+                return f"Task completed: {summary}"
+
             else:
                 return f"Error: Unknown tool '{tool_name}'."
         except Exception as e:
@@ -316,37 +583,43 @@ class HarnessService:
             headers["Authorization"] = f"Bearer {req.api_key.strip()}"
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(url, headers=headers)
-                if resp.status_code != 200:
-                    # Fallback to curated popular models list if /models is restricted or failed
-                    return cls._get_default_models(f"Provider returned HTTP {resp.status_code}")
+            for attempt in range(cls.MAX_RETRIES + 1):
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.get(url, headers=headers)
+                    if resp.status_code == 429 and attempt < cls.MAX_RETRIES:
+                        retry_after = cls._parse_retry_after(resp.headers.get("retry-after"))
+                        delay = cls._calculate_backoff(attempt, retry_after)
+                        await asyncio.sleep(delay)
+                        continue
+                    if resp.status_code != 200:
+                        # Fallback to curated popular models list if /models is restricted or failed
+                        return cls._get_default_models(f"Provider returned HTTP {resp.status_code}")
 
-                data = resp.json()
-                raw_models = data.get("data", []) if isinstance(data, dict) else []
+                    data = resp.json()
+                    raw_models = data.get("data", []) if isinstance(data, dict) else []
 
-                models: List[ModelInfo] = []
-                for m in raw_models:
-                    m_id = m.get("id", "")
-                    m_name = m.get("name", m_id)
-                    description = m.get("description")
-                    context_length = m.get("context_length")
-                    pricing = m.get("pricing")
-                    if m_id:
-                        models.append(
-                            ModelInfo(
-                                id=m_id,
-                                name=m_name,
-                                description=description,
-                                context_length=context_length,
-                                pricing=pricing,
+                    models: List[ModelInfo] = []
+                    for m in raw_models:
+                        m_id = m.get("id", "")
+                        m_name = m.get("name", m_id)
+                        description = m.get("description")
+                        context_length = m.get("context_length")
+                        pricing = m.get("pricing")
+                        if m_id:
+                            models.append(
+                                ModelInfo(
+                                    id=m_id,
+                                    name=m_name,
+                                    description=description,
+                                    context_length=context_length,
+                                    pricing=pricing,
+                                )
                             )
-                        )
 
-                if not models:
-                    return cls._get_default_models("Empty model list returned")
+                    if not models:
+                        return cls._get_default_models("Empty model list returned")
 
-                return FetchModelsResponse(models=models, count=len(models))
+                    return FetchModelsResponse(models=models, count=len(models))
         except Exception as e:
             return cls._get_default_models(str(e))
 
@@ -425,12 +698,14 @@ class HarnessService:
 
         system_instruction = (
             f"You are WorkFromPhone AI Assistant, an autonomous coding agent operating on the user's computer.\n"
-            f"Active Project Directory: {str(project_root)}\n"
-            "You have access to tools to inspect files, edit code, search the repository, and run terminal commands in the project directory.\n"
-            "Guidelines:\n"
-            "- Always investigate the project structure before modifying files.\n"
-            "- Run terminal commands (e.g. git status, tests, build) when needed to verify your changes.\n"
-            "- Provide clear explanations of your actions and reasoning to the user.\n"
+            f"Active Project Directory: {str(project_root)}\n\n"
+            "You have access to tools to inspect files, edit code, search the repository, run terminal commands, and control preview servers in the project directory.\n\n"
+            "Operating Directives:\n"
+            "1. AUTONOMOUS ACTION: Work proactively and continuously. Perform all necessary tool steps (search, read, edit, write, run tests, fix errors) until the user's task is completely fulfilled.\n"
+            "2. DIRECT TOOL USAGE: Do not merely output code snippets in chat or describe manual steps. Use `edit_file`, `write_file`, and `run_terminal_command` directly.\n"
+            "3. CONTINUOUS PROGRESSION: Never stop after just reading files or planning changes; immediately execute the next step.\n"
+            "4. VERIFICATION: Verify your changes by executing terminal commands (e.g. `flutter analyze`, `flutter test`, `pytest`, `cargo test`, `npm test`, `git status`, `git diff`).\n"
+            "5. COMPLETION: When all changes are implemented, tested, and verified, call the `task_completed` tool with a summary of the work done.\n"
         )
 
         conversation: List[Dict[str, Any]] = [
@@ -450,6 +725,7 @@ class HarnessService:
             conversation.append(msg_dict)
 
         step = 0
+        consecutive_text_turns = 0
         max_steps = req.max_steps
         accumulated_usage = {
             "prompt_tokens": 0,
@@ -464,7 +740,7 @@ class HarnessService:
         yield f"data: {json.dumps({'type': 'status', 'content': f'Connecting to {req.llm_config.model}...'})}\n\n"
 
         async with httpx.AsyncClient(timeout=180.0) as client:
-            while step < max_steps:
+            while max_steps is None or step < max_steps:
                 step += 1
                 payload = {
                     "model": req.llm_config.model,
@@ -477,153 +753,228 @@ class HarnessService:
                 if req.llm_config.max_tokens is not None:
                     payload["max_tokens"] = req.llm_config.max_tokens
 
-                try:
-                    async with client.stream(
-                        "POST", completions_url, headers=headers, json=payload
-                    ) as response:
-                        if response.status_code != 200:
-                            err_body = await response.aread()
-                            err_msg = err_body.decode("utf-8", errors="replace")
-                            yield f"data: {json.dumps({'type': 'error', 'message': f'API error ({response.status_code}): {err_msg}'})}\n\n"
-                            return
+                success = False
+                full_content = ""
+                tool_calls_acc: Dict[int, Dict[str, Any]] = {}
+                step_usage: Dict[str, Any] | None = None
 
-                        full_content = ""
-                        tool_calls_acc: Dict[int, Dict[str, Any]] = {}
-                        step_usage: Dict[str, Any] | None = None
+                for attempt in range(cls.MAX_RETRIES + 1):
+                    full_content = ""
+                    tool_calls_acc = {}
+                    step_usage = None
+                    stream_started = False
+                    should_retry = False
 
-                        async for line in response.aiter_lines():
-                            if not line or not line.startswith("data:"):
-                                continue
-                            line_data = line[5:].strip()
-                            if line_data == "[DONE]":
-                                break
-
-                            try:
-                                chunk_json = json.loads(line_data)
-                                if isinstance(chunk_json.get("usage"), dict):
-                                    step_usage = chunk_json["usage"]
-                                choices = chunk_json.get("choices", [])
-                                if not choices:
+                    try:
+                        async with client.stream(
+                            "POST", completions_url, headers=headers, json=payload
+                        ) as response:
+                            if response.status_code == 429:
+                                err_body = await response.aread()
+                                err_msg = err_body.decode("utf-8", errors="replace")
+                                if attempt < cls.MAX_RETRIES:
+                                    retry_after = cls._parse_retry_after(response.headers.get("retry-after"))
+                                    delay = cls._calculate_backoff(attempt, retry_after)
+                                    yield f"data: {json.dumps({'type': 'status', 'content': f'Rate limited (429). Retrying in {delay:.1f}s (attempt {attempt + 1}/{cls.MAX_RETRIES})...'})}\n\n"
+                                    await asyncio.sleep(delay)
                                     continue
-                                delta = choices[0].get("delta", {})
+                                else:
+                                    yield f"data: {json.dumps({'type': 'error', 'message': f'API error (429): Rate limit exceeded after {cls.MAX_RETRIES} retries: {err_msg}'})}\n\n"
+                                    return
 
-                                # Content chunk
-                                content_piece = delta.get("content")
-                                if content_piece:
-                                    full_content += content_piece
-                                    yield f"data: {json.dumps({'type': 'chunk', 'content': content_piece})}\n\n"
+                            if response.status_code != 200:
+                                err_body = await response.aread()
+                                err_msg = err_body.decode("utf-8", errors="replace")
+                                yield f"data: {json.dumps({'type': 'error', 'message': f'API error ({response.status_code}): {err_msg}'})}\n\n"
+                                return
 
-                                # Tool calls delta
-                                delta_tool_calls = delta.get("tool_calls", [])
-                                for tc in delta_tool_calls:
-                                    idx = tc.get("index", 0)
-                                    if idx not in tool_calls_acc:
-                                        tool_calls_acc[idx] = {
-                                            "id": tc.get("id", f"call_{idx}"),
-                                            "type": "function",
-                                            "function": {
-                                                "name": tc.get("function", {}).get("name", ""),
-                                                "arguments": "",
-                                            },
-                                        }
-                                    fn = tc.get("function", {})
-                                    if fn.get("name"):
-                                        tool_calls_acc[idx]["function"]["name"] = fn["name"]
-                                    if fn.get("arguments"):
-                                        tool_calls_acc[idx]["function"]["arguments"] += fn["arguments"]
+                            async for line in response.aiter_lines():
+                                if not line or not line.startswith("data:"):
+                                    continue
+                                line_data = line[5:].strip()
+                                if line_data == "[DONE]":
+                                    break
 
-                            except json.JSONDecodeError:
-                                pass
+                                try:
+                                    chunk_json = json.loads(line_data)
+                                    if "error" in chunk_json:
+                                        err_obj = chunk_json["error"]
+                                        err_msg = (
+                                            err_obj.get("message", str(err_obj))
+                                            if isinstance(err_obj, dict)
+                                            else str(err_obj)
+                                        )
+                                        if (
+                                            not stream_started
+                                            and attempt < cls.MAX_RETRIES
+                                            and ("rate" in err_msg.lower() or "429" in str(err_obj))
+                                        ):
+                                            delay = cls._calculate_backoff(attempt)
+                                            yield f"data: {json.dumps({'type': 'status', 'content': f'Rate limited. Retrying in {delay:.1f}s (attempt {attempt + 1}/{cls.MAX_RETRIES})...'})}\n\n"
+                                            await asyncio.sleep(delay)
+                                            should_retry = True
+                                            break
+                                        yield f"data: {json.dumps({'type': 'error', 'message': f'API stream error: {err_msg}'})}\n\n"
+                                        return
 
-                    if step_usage is not None:
-                        prompt_tokens = int(step_usage.get("prompt_tokens") or 0)
-                        completion_tokens = int(step_usage.get("completion_tokens") or 0)
-                        total_tokens = int(
-                            step_usage.get("total_tokens")
-                            or prompt_tokens + completion_tokens
-                        )
-                        prompt_details = step_usage.get("prompt_tokens_details") or {}
-                        completion_details = (
-                            step_usage.get("completion_tokens_details") or {}
-                        )
-                        accumulated_usage["prompt_tokens"] += prompt_tokens
-                        accumulated_usage["completion_tokens"] += completion_tokens
-                        accumulated_usage["total_tokens"] += total_tokens
-                        accumulated_usage["cached_tokens"] += int(
-                            prompt_details.get("cached_tokens") or 0
-                        )
-                        accumulated_usage["reasoning_tokens"] += int(
-                            completion_details.get("reasoning_tokens") or 0
-                        )
-                        if step_usage.get("cost") is not None:
-                            accumulated_usage["cost"] += float(step_usage["cost"])
-                            has_usage_cost = True
+                                    if isinstance(chunk_json.get("usage"), dict):
+                                        step_usage = chunk_json["usage"]
+                                    choices = chunk_json.get("choices", [])
+                                    if not choices:
+                                        continue
+                                    delta = choices[0].get("delta", {})
 
-                        usage_event = {
-                            "type": "usage",
-                            "usage": {
-                                **accumulated_usage,
-                                "cost": (
-                                    accumulated_usage["cost"]
-                                    if has_usage_cost
-                                    else None
-                                ),
-                                "context_tokens": prompt_tokens + completion_tokens,
-                                "exact": True,
-                            },
+                                    # Content chunk
+                                    content_piece = delta.get("content")
+                                    if content_piece:
+                                        full_content += content_piece
+                                        stream_started = True
+                                        yield f"data: {json.dumps({'type': 'chunk', 'content': content_piece})}\n\n"
+
+                                    # Tool calls delta
+                                    delta_tool_calls = delta.get("tool_calls", [])
+                                    for tc in delta_tool_calls:
+                                        idx = tc.get("index", 0)
+                                        if idx not in tool_calls_acc:
+                                            tool_calls_acc[idx] = {
+                                                "id": tc.get("id", f"call_{idx}"),
+                                                "type": "function",
+                                                "function": {
+                                                    "name": tc.get("function", {}).get("name", ""),
+                                                    "arguments": "",
+                                                },
+                                            }
+                                        fn = tc.get("function", {})
+                                        if fn.get("name"):
+                                            tool_calls_acc[idx]["function"]["name"] = fn["name"]
+                                        if fn.get("arguments"):
+                                            tool_calls_acc[idx]["function"]["arguments"] += fn["arguments"]
+
+                                except json.JSONDecodeError:
+                                    pass
+
+                        if should_retry:
+                            continue
+
+                        success = True
+                        break
+
+                    except httpx.RequestError as exc:
+                        if not stream_started and attempt < cls.MAX_RETRIES:
+                            delay = cls._calculate_backoff(attempt)
+                            yield f"data: {json.dumps({'type': 'status', 'content': f'Network error ({exc}). Retrying in {delay:.1f}s (attempt {attempt + 1}/{cls.MAX_RETRIES})...'})}\n\n"
+                            await asyncio.sleep(delay)
+                            continue
+                        else:
+                            yield f"data: {json.dumps({'type': 'error', 'message': f'Harness execution error: {str(exc)}'})}\n\n"
+                            return
+                    except Exception as e:
+                        yield f"data: {json.dumps({'type': 'error', 'message': f'Harness execution error: {str(e)}'})}\n\n"
+                        return
+
+                if not success:
+                    return
+
+                # If no structured tool calls were emitted in delta, check for text-embedded tool calls
+                if not tool_calls_acc and full_content:
+                    text_calls = cls._extract_text_tool_calls(full_content)
+                    for idx, tc in enumerate(text_calls):
+                        tool_calls_acc[idx] = tc
+
+                if step_usage is not None:
+                    prompt_tokens = int(step_usage.get("prompt_tokens") or 0)
+                    completion_tokens = int(step_usage.get("completion_tokens") or 0)
+                    total_tokens = int(
+                        step_usage.get("total_tokens")
+                        or prompt_tokens + completion_tokens
+                    )
+                    prompt_details = step_usage.get("prompt_tokens_details") or {}
+                    completion_details = (
+                        step_usage.get("completion_tokens_details") or {}
+                    )
+                    accumulated_usage["prompt_tokens"] += prompt_tokens
+                    accumulated_usage["completion_tokens"] += completion_tokens
+                    accumulated_usage["total_tokens"] += total_tokens
+                    accumulated_usage["cached_tokens"] += int(
+                        prompt_details.get("cached_tokens") or 0
+                    )
+                    accumulated_usage["reasoning_tokens"] += int(
+                        completion_details.get("reasoning_tokens") or 0
+                    )
+                    if step_usage.get("cost") is not None:
+                        accumulated_usage["cost"] += float(step_usage["cost"])
+                        has_usage_cost = True
+
+                    usage_event = {
+                        "type": "usage",
+                        "usage": {
+                            **accumulated_usage,
+                            "cost": (
+                                accumulated_usage["cost"]
+                                if has_usage_cost
+                                else None
+                            ),
+                            "context_tokens": prompt_tokens + completion_tokens,
+                            "exact": True,
+                        },
+                    }
+                    yield f"data: {json.dumps(usage_event)}\n\n"
+
+                # Check if model requested tool calls
+                if tool_calls_acc:
+                    consecutive_text_turns = 0
+                    constructed_tool_calls = [tool_calls_acc[k] for k in sorted(tool_calls_acc.keys())]
+                    conversation.append(
+                        {
+                            "role": "assistant",
+                            "content": full_content or None,
+                            "tool_calls": constructed_tool_calls,
                         }
-                        yield f"data: {json.dumps(usage_event)}\n\n"
+                    )
 
-                    # Check if model requested tool calls
-                    if tool_calls_acc:
-                        # Append assistant message with tool calls
-                        constructed_tool_calls = [tool_calls_acc[k] for k in sorted(tool_calls_acc.keys())]
+                    has_task_completed = False
+
+                    # Execute each tool call
+                    for tc in constructed_tool_calls:
+                        fn_name = tc["function"]["name"]
+                        fn_args_raw = tc["function"]["arguments"]
+                        call_id = tc.get("id", "call_0")
+
+                        try:
+                            fn_args = json.loads(fn_args_raw) if fn_args_raw else {}
+                        except json.JSONDecodeError:
+                            fn_args = {"raw": fn_args_raw}
+
+                        if fn_name == "task_completed":
+                            has_task_completed = True
+
+                        yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': fn_name, 'args': fn_args})}\n\n"
+
+                        output = await cls.execute_tool(project_root, fn_name, fn_args)
+
+                        yield f"data: {json.dumps({'type': 'tool_call_result', 'tool': fn_name, 'output': output})}\n\n"
+
+                        # Append tool response to conversation
                         conversation.append(
                             {
-                                "role": "assistant",
-                                "content": full_content or None,
-                                "tool_calls": constructed_tool_calls,
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "name": fn_name,
+                                "content": output,
                             }
                         )
 
-                        # Execute each tool call
-                        for tc in constructed_tool_calls:
-                            fn_name = tc["function"]["name"]
-                            fn_args_raw = tc["function"]["arguments"]
-                            call_id = tc.get("id", "call_0")
-
-                            try:
-                                fn_args = json.loads(fn_args_raw) if fn_args_raw else {}
-                            except json.JSONDecodeError:
-                                fn_args = {"raw": fn_args_raw}
-
-                            yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': fn_name, 'args': fn_args})}\n\n"
-
-                            output = await cls.execute_tool(project_root, fn_name, fn_args)
-
-                            yield f"data: {json.dumps({'type': 'tool_call_result', 'tool': fn_name, 'output': output})}\n\n"
-
-                            # Append tool response to conversation
-                            conversation.append(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": call_id,
-                                    "name": fn_name,
-                                    "content": output,
-                                }
-                            )
-
-                        # Continue loop to get model's next turn
-                        yield f"data: {json.dumps({'type': 'status', 'content': 'Processing tool results...'})}\n\n"
-                        continue
-
-                    else:
-                        # No tool calls: model provided final response
+                    if has_task_completed:
                         yield f"data: {json.dumps({'type': 'done', 'total_steps': step})}\n\n"
                         return
 
-                except Exception as e:
-                    yield f"data: {json.dumps({'type': 'error', 'message': f'Harness execution error: {str(e)}'})}\n\n"
+                    # Continue loop to get model's next turn
+                    yield f"data: {json.dumps({'type': 'status', 'content': 'Processing tool results...'})}\n\n"
+                    continue
+
+                else:
+                    # No tool calls: model provided final response
+                    yield f"data: {json.dumps({'type': 'done', 'total_steps': step})}\n\n"
                     return
 
             yield f"data: {json.dumps({'type': 'done', 'total_steps': step, 'message': 'Reached max steps limit.'})}\n\n"

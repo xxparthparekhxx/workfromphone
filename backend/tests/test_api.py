@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from backend.core.config import settings
 from backend.main import app
-from backend.schemas.llm import ChatMessage, ChatTaskRequest, LLMConfig
+from backend.schemas.llm import ChatMessage, ChatTaskRequest, FetchModelsRequest, LLMConfig
 from backend.services.git_service import git_service
 from backend.services.harness_service import harness_service
 from backend.services.terminal_service import terminal_service
@@ -150,6 +150,335 @@ def test_chat_stream_reports_exact_accumulated_usage(
         "exact": True,
     }
     assert events[-1] == {"type": "done", "total_steps": 1}
+
+
+def test_chat_stream_handles_429_with_exponential_backoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    attempts = 0
+    sleeps = []
+
+    async def fake_sleep(duration):
+        sleeps.append(duration)
+
+    monkeypatch.setattr(harness_service_module.asyncio, "sleep", fake_sleep)
+
+    class FakeRateLimitedResponse:
+        status_code = 429
+        headers = {"retry-after": "0.1"}
+
+        async def aread(self):
+            return b'{"error":{"message":"Rate limit exceeded","code":429}}'
+
+    class FakeSuccessResponse:
+        status_code = 200
+
+        async def aiter_lines(self):
+            yield 'data: {"choices":[{"delta":{"content":"Recovered from 429"}}]}'
+            yield "data: [DONE]"
+
+    class FakeStream:
+        def __init__(self, resp):
+            self._resp = resp
+
+        async def __aenter__(self):
+            return self._resp
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def stream(self, *_args, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return FakeStream(FakeRateLimitedResponse())
+            return FakeStream(FakeSuccessResponse())
+
+    monkeypatch.setattr(harness_service_module.httpx, "AsyncClient", FakeClient)
+    request = ChatTaskRequest(
+        project_path=str(tmp_path),
+        messages=[ChatMessage(role="user", content="Hello")],
+        llm_config=LLMConfig(model="test/model"),
+    )
+
+    async def collect_events():
+        events = []
+        async for event in harness_service.run_agentic_task_stream(request):
+            events.append(json.loads(event.removeprefix("data: ").strip()))
+        return events
+
+    events = asyncio.run(collect_events())
+    assert attempts == 2
+    assert len(sleeps) == 1
+    assert any("Rate limited (429)" in event.get("content", "") for event in events if event.get("type") == "status")
+    assert any(event.get("content") == "Recovered from 429" for event in events if event.get("type") == "chunk")
+    assert events[-1] == {"type": "done", "total_steps": 1}
+
+
+def test_chat_stream_429_max_retries_exceeded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    attempts = 0
+
+    async def fake_sleep(duration):
+        pass
+
+    monkeypatch.setattr(harness_service_module.asyncio, "sleep", fake_sleep)
+
+    class FakeRateLimitedResponse:
+        status_code = 429
+        headers = {}
+
+        async def aread(self):
+            return b"Too Many Requests"
+
+    class FakeStream:
+        async def __aenter__(self):
+            return FakeRateLimitedResponse()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def stream(self, *_args, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            return FakeStream()
+
+    monkeypatch.setattr(harness_service_module.httpx, "AsyncClient", FakeClient)
+    request = ChatTaskRequest(
+        project_path=str(tmp_path),
+        messages=[ChatMessage(role="user", content="Hello")],
+        llm_config=LLMConfig(model="test/model"),
+    )
+
+    async def collect_events():
+        events = []
+        async for event in harness_service.run_agentic_task_stream(request):
+            events.append(json.loads(event.removeprefix("data: ").strip()))
+        return events
+
+    events = asyncio.run(collect_events())
+    assert attempts == harness_service.MAX_RETRIES + 1
+    error_event = next(e for e in events if e.get("type") == "error")
+    assert "Rate limit exceeded after" in error_event["message"]
+
+
+def test_fetch_models_handles_429_with_retry(monkeypatch: pytest.MonkeyPatch):
+    attempts = 0
+
+    async def fake_sleep(duration):
+        pass
+
+    monkeypatch.setattr(harness_service_module.asyncio, "sleep", fake_sleep)
+
+    class FakeResponse:
+        def __init__(self, status_code, json_data=None):
+            self.status_code = status_code
+            self._json = json_data or {}
+            self.headers = {}
+
+        def json(self):
+            return self._json
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, *_args, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return FakeResponse(429)
+            return FakeResponse(200, {"data": [{"id": "custom/model", "name": "Custom Model"}]})
+
+    monkeypatch.setattr(harness_service_module.httpx, "AsyncClient", FakeClient)
+    req = FetchModelsRequest(base_url="https://openrouter.ai/api/v1", api_key="sk-test")
+    resp = asyncio.run(harness_service.fetch_models(req))
+    assert attempts == 2
+    assert resp.count == 1
+    assert resp.models[0].id == "custom/model"
+
+
+def test_chat_stream_continuous_loop_with_tools_and_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    step = 0
+    demo_file = tmp_path / "hello.txt"
+    demo_file.write_text("initial content", encoding="utf-8")
+
+    class Step1Response:
+        status_code = 200
+
+        async def aiter_lines(self):
+            # Model outputs text thought AND tool call
+            yield 'data: {"choices":[{"delta":{"content":"I will inspect the file first.\\n"}}]}'
+            yield (
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+                '"type":"function","function":{"name":"read_file",'
+                '"arguments":"{\\"relative_path\\":\\"hello.txt\\"}"}}]}}]}'
+            )
+            yield "data: [DONE]"
+
+    class Step2Response:
+        status_code = 200
+
+        async def aiter_lines(self):
+            # Model outputs text thought AND final task_completed tool call
+            yield 'data: {"choices":[{"delta":{"content":"File verified. All work is complete."}}]}'
+            yield (
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_2",'
+                '"type":"function","function":{"name":"task_completed",'
+                '"arguments":"{\\"summary\\":\\"Read and verified hello.txt\\"}"}}]}}]}'
+            )
+            yield "data: [DONE]"
+
+    class FakeStream:
+        def __init__(self, resp):
+            self._resp = resp
+
+        async def __aenter__(self):
+            return self._resp
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def stream(self, *_args, **_kwargs):
+            nonlocal step
+            step += 1
+            if step == 1:
+                return FakeStream(Step1Response())
+            return FakeStream(Step2Response())
+
+    monkeypatch.setattr(harness_service_module.httpx, "AsyncClient", FakeClient)
+    request = ChatTaskRequest(
+        project_path=str(tmp_path),
+        messages=[ChatMessage(role="user", content="Inspect hello.txt")],
+        llm_config=LLMConfig(model="test/model"),
+    )
+
+    async def collect_events():
+        events = []
+        async for event in harness_service.run_agentic_task_stream(request):
+            events.append(json.loads(event.removeprefix("data: ").strip()))
+        return events
+
+    events = asyncio.run(collect_events())
+    assert step == 2
+    tool_starts = [e["tool"] for e in events if e.get("type") == "tool_call_start"]
+    assert tool_starts == ["read_file", "task_completed"]
+    assert any("I will inspect the file first" in e.get("content", "") for e in events if e.get("type") == "chunk")
+    assert any("File verified. All work is complete" in e.get("content", "") for e in events if e.get("type") == "chunk")
+    assert events[-1] == {"type": "done", "total_steps": 2}
+
+
+def test_chat_stream_extracts_text_embedded_tool_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    step = 0
+    demo_file = tmp_path / "hello.txt"
+    demo_file.write_text("some content", encoding="utf-8")
+
+    class Step1Response:
+        status_code = 200
+
+        async def aiter_lines(self):
+            # Model outputs XML-style tool call in text stream (e.g. DeepSeek R1 style)
+            yield 'data: {"choices":[{"delta":{"content":"Let me check <function=read_file>{\\"relative_path\\": \\"hello.txt\\"}</function>"}}]}'
+            yield "data: [DONE]"
+
+    class Step2Response:
+        status_code = 200
+
+        async def aiter_lines(self):
+            # Final text response
+            yield 'data: {"choices":[{"delta":{"content":"Content is some content."}}]}'
+            yield "data: [DONE]"
+
+    class FakeStream:
+        def __init__(self, resp):
+            self._resp = resp
+
+        async def __aenter__(self):
+            return self._resp
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def stream(self, *_args, **_kwargs):
+            nonlocal step
+            step += 1
+            if step == 1:
+                return FakeStream(Step1Response())
+            return FakeStream(Step2Response())
+
+    monkeypatch.setattr(harness_service_module.httpx, "AsyncClient", FakeClient)
+    request = ChatTaskRequest(
+        project_path=str(tmp_path),
+        messages=[ChatMessage(role="user", content="Read hello.txt")],
+        llm_config=LLMConfig(model="test/model"),
+    )
+
+    async def collect_events():
+        events = []
+        async for event in harness_service.run_agentic_task_stream(request):
+            events.append(json.loads(event.removeprefix("data: ").strip()))
+        return events
+
+    events = asyncio.run(collect_events())
+    assert step == 2
+    tool_starts = [e["tool"] for e in events if e.get("type") == "tool_call_start"]
+    assert tool_starts == ["read_file"]
+    assert events[-1] == {"type": "done", "total_steps": 2}
 
 
 def test_terminal_run_endpoint(tmp_path: Path):
@@ -729,3 +1058,258 @@ def test_top_processes_are_ranked_by_measured_cpu():
         key=lambda process: (process.cpu_percent, process.memory_percent),
         reverse=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Preview registry / proxy
+# ---------------------------------------------------------------------------
+
+
+from backend.services.preview_service import preview_registry  # noqa: E402
+from backend.services.preview_service import PreviewRegistry  # noqa: E402
+from backend.services import preview_service as preview_service_module  # noqa: E402
+
+
+@pytest.fixture
+def reset_preview_registry():
+    """Ensure each preview test starts with an empty registry."""
+    snapshot = list(preview_registry._entries.values())
+    listeners = list(preview_registry._listeners)
+    preview_registry._entries.clear()
+    yield
+    preview_registry._entries.clear()
+    for entry in snapshot:
+        preview_registry._entries[entry.id] = entry
+    preview_registry._listeners.clear()
+    for listener in listeners:
+        preview_registry._listeners.add(listener)
+
+
+def _start_preview_upstream(directory: Path, routes: dict[str, tuple[int, str, str]]) -> int:
+    """Spin up a tiny HTTP server in a background thread for proxy tests."""
+
+    import http.server
+    import socketserver
+    import threading
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            route = routes.get(self.path)
+            if route is None:
+                self.send_response(404)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"not found")
+                return
+            status, content_type, body = route
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body.encode("utf-8"))))
+            self.end_headers()
+            self.wfile.write(body.encode("utf-8"))
+
+        def log_message(self, format: str, *args) -> None:  # noqa: A002
+            return
+
+    server = socketserver.TCPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def test_preview_register_and_list_round_trip(tmp_path: Path, reset_preview_registry):
+    project = tmp_path / "demo"
+    project.mkdir()
+
+    register = client.post(
+        "/api/v1/preview/register",
+        json={
+            "project_path": str(project),
+            "port": 8080,
+            "label": "Vite dev server",
+            "source": "llm",
+        },
+    )
+    assert register.status_code == 200
+    entry = register.json()["entry"]
+    assert entry["label"] == "Vite dev server"
+    assert entry["port"] == 8080
+    assert entry["source"] == "llm"
+    assert entry["id"].startswith("prev_8080_")
+
+    listing = client.get(
+        "/api/v1/preview",
+        params={"project_path": str(project)},
+    )
+    assert listing.status_code == 200
+    ids = [item["id"] for item in listing.json()["entries"]]
+    assert ids == [entry["id"]]
+
+    other_listing = client.get(
+        "/api/v1/preview",
+        params={"project_path": "/tmp/some/other/project"},
+    )
+    assert other_listing.status_code == 200
+    assert other_listing.json()["entries"] == []
+
+    removed = client.post(
+        "/api/v1/preview/unregister",
+        json={"id": entry["id"]},
+    )
+    assert removed.status_code == 200
+
+    after = client.get(
+        "/api/v1/preview",
+        params={"project_path": str(project)},
+    )
+    assert after.json()["entries"] == []
+
+
+def test_preview_register_persists_across_instances(tmp_path: Path):
+    """Two registries should be backed by independent state in production."""
+    project = tmp_path / "demo"
+    project.mkdir()
+    registry_a = PreviewRegistry()
+    registry_b = PreviewRegistry()
+    asyncio.run(registry_a.register(
+        project_path=str(project),
+        port=9000,
+        label="a-only",
+    ))
+    assert registry_a.list_for_project(str(project))
+    assert not registry_b.list_for_project(str(project))
+
+
+def test_preview_unregister_missing_returns_404(tmp_path: Path, reset_preview_registry):
+    resp = client.post(
+        "/api/v1/preview/unregister",
+        json={"id": "does-not-exist"},
+    )
+    assert resp.status_code == 404
+
+
+def test_preview_proxy_proxies_assets_and_rewrites_spa_paths(
+    tmp_path: Path, reset_preview_registry
+):
+    project = tmp_path / "demo"
+    project.mkdir()
+
+    server, thread = _start_preview_upstream(
+        project,
+        routes={
+            "/": (200, "text/html", "<h1>SPA root</h1>"),
+            "/assets/app.js": (200, "application/javascript", "console.log('hi')"),
+            "/dashboard": (404, "text/plain", "not found"),
+            "/favicon.ico": (404, "text/plain", "not found"),
+        },
+    )
+    try:
+        port = server.server_address[1]
+        registered = client.post(
+            "/api/v1/preview/register",
+            json={
+                "project_path": str(project),
+                "port": port,
+                "label": "test",
+            },
+        )
+        entry_id = registered.json()["entry"]["id"]
+
+        # Static asset passes through untouched.
+        asset = client.get(f"/api/v1/preview/proxy/{entry_id}/assets/app.js")
+        assert asset.status_code == 200
+        assert asset.headers["content-type"].startswith("application/javascript")
+        assert asset.text == "console.log('hi')"
+
+        # Root returns the actual index.
+        root = client.get(f"/api/v1/preview/proxy/{entry_id}/")
+        assert root.status_code == 200
+        assert "<h1>SPA root</h1>" in root.text
+
+        # SPA client route falls back to / (SPA rewrite).
+        spa = client.get(f"/api/v1/preview/proxy/{entry_id}/dashboard")
+        assert spa.status_code == 200
+        assert "<h1>SPA root</h1>" in spa.text
+
+        # An asset-shaped 404 stays a 404 (we never rewrite file paths).
+        favicon = client.get(f"/api/v1/preview/proxy/{entry_id}/favicon.ico")
+        assert favicon.status_code == 404
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_preview_proxy_unknown_entry_returns_404(tmp_path: Path, reset_preview_registry):
+    resp = client.get("/api/v1/preview/proxy/nope/")
+    assert resp.status_code == 404
+
+
+def test_preview_register_preview_tool_uses_llm_source(tmp_path: Path, reset_preview_registry):
+    project = tmp_path / "demo"
+    project.mkdir()
+
+    output = asyncio.run(
+        harness_service.execute_tool(
+            project,
+            "register_preview",
+            {"port": 4200, "label": "ng serve", "base_path": "/app/"},
+        ),
+    )
+    assert "Registered preview" in output
+
+    listing = client.get(
+        "/api/v1/preview",
+        params={"project_path": str(project)},
+    )
+    entries = listing.json()["entries"]
+    assert len(entries) == 1
+    assert entries[0]["source"] == "llm"
+    assert entries[0]["label"] == "ng serve"
+    assert entries[0]["base_path"] == "/app/"
+
+
+def test_preview_unregister_tool_supports_all(tmp_path: Path, reset_preview_registry):
+    project = tmp_path / "demo"
+    project.mkdir()
+
+    asyncio.run(harness_service.execute_tool(
+        project, "register_preview", {"port": 7000, "label": "a"},
+    ))
+    asyncio.run(harness_service.execute_tool(
+        project, "register_preview", {"port": 7001, "label": "b"},
+    ))
+
+    listing = client.get(
+        "/api/v1/preview",
+        params={"project_path": str(project)},
+    )
+    assert len(listing.json()["entries"]) == 2
+
+    output = asyncio.run(
+        harness_service.execute_tool(project, "unregister_preview", {"all": True}),
+    )
+    assert "Removed 2" in output
+
+    listing = client.get(
+        "/api/v1/preview",
+        params={"project_path": str(project)},
+    )
+    assert listing.json()["entries"] == []
+
+
+def test_preview_register_tool_rejects_bad_port(tmp_path: Path, reset_preview_registry):
+    project = tmp_path / "demo"
+    project.mkdir()
+
+    output = asyncio.run(
+        harness_service.execute_tool(
+            project,
+            "register_preview",
+            {"port": "nope", "label": "x"},
+        ),
+    )
+    assert "Error" in output
+    assert client.get(
+        "/api/v1/preview",
+        params={"project_path": str(project)},
+    ).json()["entries"] == []

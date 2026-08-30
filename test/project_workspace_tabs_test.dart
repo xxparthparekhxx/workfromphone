@@ -25,7 +25,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Verify all workspace tabs exist in TabBar
-    expect(find.byType(Tab), findsNWidgets(5));
+    expect(find.byType(Tab), findsNWidgets(6));
     expect(
       find.descendant(
         of: find.byType(TabBar),
@@ -58,6 +58,13 @@ void main() {
       find.descendant(
         of: find.byType(TabBar),
         matching: find.byIcon(CupertinoIcons.heart),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(TabBar),
+        matching: find.byIcon(CupertinoIcons.globe),
       ),
       findsOneWidget,
     );
@@ -114,5 +121,17 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.byKey(const Key('system-monitor-tab')), findsOneWidget);
+
+    // Switch to Preview tab. It renders the empty state until a backend
+    // registers an entry.
+    await tester.tap(
+      find.descendant(
+        of: find.byType(TabBar),
+        matching: find.byIcon(CupertinoIcons.globe),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('preview-empty-state')), findsOneWidget);
+    expect(find.byKey(const Key('preview-list')), findsNothing);
   });
 }

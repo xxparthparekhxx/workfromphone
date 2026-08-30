@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:workfromphone/models/git_status.dart';
 import 'package:workfromphone/models/model_info.dart';
+import 'package:workfromphone/models/preview_entry.dart';
 import 'package:workfromphone/models/terminal_output.dart';
 
 class BrowseResult {
@@ -645,5 +646,89 @@ class ApiService {
     }
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     return data['success'] as bool? ?? false;
+  }
+
+  // --- Preview Browser ---
+
+  static Future<List<PreviewEntry>> listPreviews(
+    String backendUrl, {
+    required String projectPath,
+  }) async {
+    final base = cleanUrl(backendUrl);
+    final uri = Uri.parse('$base/api/v1/preview')
+        .replace(queryParameters: {'project_path': projectPath});
+    final resp = await _get(uri).timeout(const Duration(seconds: 10));
+    if (resp.statusCode != 200) {
+      throw Exception('Failed to list previews: HTTP ${resp.statusCode}');
+    }
+    final data = jsonDecode(resp.body) as Map<String, dynamic>;
+    final raw = (data['entries'] as List<dynamic>? ?? [])
+        .whereType<Map<String, dynamic>>();
+    return raw.map(PreviewEntry.fromJson).toList();
+  }
+
+  static Future<PreviewEntry> registerPreview(
+    String backendUrl, {
+    required String projectPath,
+    required int port,
+    required String label,
+    String basePath = '',
+    String source = 'manual',
+    String? id,
+  }) async {
+    final base = cleanUrl(backendUrl);
+    final uri = Uri.parse('$base/api/v1/preview/register');
+    final resp = await _post(
+      uri,
+      body: jsonEncode({
+        'project_path': projectPath,
+        'port': port,
+        'label': label,
+        'base_path': basePath,
+        'source': source,
+        ?id: id,
+      }),
+    ).timeout(const Duration(seconds: 10));
+    if (resp.statusCode != 200) {
+      throw Exception('Failed to register preview: HTTP ${resp.statusCode}');
+    }
+    final data = jsonDecode(resp.body) as Map<String, dynamic>;
+    final entry = data['entry'] as Map<String, dynamic>?;
+    if (entry == null) {
+      throw Exception('Preview registration returned no entry');
+    }
+    return PreviewEntry.fromJson(entry);
+  }
+
+  static Future<void> unregisterPreview(
+    String backendUrl, {
+    required String id,
+  }) async {
+    final base = cleanUrl(backendUrl);
+    final uri = Uri.parse('$base/api/v1/preview/unregister');
+    final resp = await _post(
+      uri,
+      body: jsonEncode({'id': id}),
+    ).timeout(const Duration(seconds: 10));
+    if (resp.statusCode != 200) {
+      throw Exception('Failed to unregister preview: HTTP ${resp.statusCode}');
+    }
+  }
+
+  /// Build the in-app URL the WebView should load for [entry].
+  ///
+  /// The proxy lives at `/api/v1/preview/proxy/{id}/{path}`, which strips
+  /// the `/api/v1` prefix concern out of the device and lets the WebView
+  /// act on the same backend origin as every other request, so the
+  /// bearer token is forwarded through `WebViewController.loadRequest`
+  /// headers.
+  static Uri previewUri(
+    String backendUrl, {
+    required String entryId,
+    String path = '/',
+  }) {
+    final base = cleanUrl(backendUrl);
+    final normalized = path.startsWith('/') ? path : '/$path';
+    return Uri.parse('$base/api/v1/preview/proxy/$entryId$normalized');
   }
 }

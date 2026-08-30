@@ -31,7 +31,10 @@ class ChatTaskRequest(BaseModel):
     project_path: str = Field(description="Target project directory root on host PC")
     messages: List[ChatMessage] = Field(description="Conversation message history")
     llm_config: LLMConfig = Field(description="LLM provider and model configuration")
-    max_steps: int = Field(default=10, description="Max agentic tool-calling turns")
+    max_steps: Optional[int] = Field(
+        default=None,
+        description="Optional max agentic tool-calling turns. When None, runs without step limit until task completion.",
+    )
 
 
 class ModelInfo(BaseModel):

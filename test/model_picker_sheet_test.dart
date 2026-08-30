@@ -37,7 +37,9 @@ void main() {
     ),
   ];
 
-  testWidgets('ModelPickerSheet displays models and allows selection', (WidgetTester tester) async {
+  testWidgets('ModelPickerSheet displays models and allows selection', (
+    WidgetTester tester,
+  ) async {
     ModelInfo? selected;
 
     await tester.pumpWidget(
@@ -67,7 +69,9 @@ void main() {
     expect(selected!.id, 'anthropic/claude-3.7-sonnet');
   });
 
-  testWidgets('ModelPickerSheet searches models by text', (WidgetTester tester) async {
+  testWidgets('ModelPickerSheet searches models by text', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -92,7 +96,9 @@ void main() {
     expect(find.text('GPT-4o'), findsNothing);
   });
 
-  testWidgets('ModelPickerSheet filters by Free models chip', (WidgetTester tester) async {
+  testWidgets('ModelPickerSheet filters by Free models chip', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -119,7 +125,9 @@ void main() {
     expect(find.text('GPT-4o'), findsNothing);
   });
 
-  testWidgets('ModelPickerSheet filters by Anthropic chip', (WidgetTester tester) async {
+  testWidgets('ModelPickerSheet filters by Anthropic chip', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(

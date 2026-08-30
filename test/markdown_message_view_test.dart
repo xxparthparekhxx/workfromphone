@@ -5,7 +5,9 @@ import 'package:gpt_markdown/gpt_markdown.dart';
 
 void main() {
   group('MarkdownMessageView Tests', () {
-    testWidgets('renders basic markdown text properly', (WidgetTester tester) async {
+    testWidgets('renders basic markdown text properly', (
+      WidgetTester tester,
+    ) async {
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
@@ -21,8 +23,11 @@ void main() {
       expect(find.byType(GptMarkdown), findsOneWidget);
     });
 
-    testWidgets('renders code blocks and user message styling', (WidgetTester tester) async {
-      const codeSnippet = '```dart\nvoid main() {\n  print("Hello World!");\n}\n```';
+    testWidgets('renders code blocks and user message styling', (
+      WidgetTester tester,
+    ) async {
+      const codeSnippet =
+          '```dart\nvoid main() {\n  print("Hello World!");\n}\n```';
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
@@ -39,7 +44,9 @@ void main() {
       expect(find.byType(SelectionArea), findsOneWidget);
     });
 
-    testWidgets('renders lists and tables without crashing', (WidgetTester tester) async {
+    testWidgets('renders lists and tables without crashing', (
+      WidgetTester tester,
+    ) async {
       const tableAndList = '''
 - Item 1
 - Item 2
@@ -52,10 +59,7 @@ void main() {
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
-            body: MarkdownMessageView(
-              data: tableAndList,
-              isUser: false,
-            ),
+            body: MarkdownMessageView(data: tableAndList, isUser: false),
           ),
         ),
       );

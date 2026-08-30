@@ -4,37 +4,40 @@ import 'package:workfromphone/utils/material_icon_theme.dart';
 import 'package:workfromphone/widgets/material_file_icon.dart';
 
 void main() {
-  testWidgets('MaterialFileIcon renders proper file and folder icons and badges', (WidgetTester tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(
-          body: Column(
-            children: [
-              MaterialFileIcon(name: 'main.dart'),
-              MaterialFileIcon(name: 'server.py'),
-              MaterialFileIcon(name: 'index.ts'),
-              MaterialFileIcon(name: 'pubspec.yaml'),
-              MaterialFileIcon(name: 'package.json'),
-              MaterialFileIcon(name: 'README.md'),
-              MaterialFileIcon(name: 'Dockerfile'),
-              MaterialFileIcon(name: 'lib', isDir: true),
-              MaterialFileIcon(name: 'test', isDir: true),
-              MaterialFileIcon(name: 'assets', isDir: true),
-            ],
+  testWidgets(
+    'MaterialFileIcon renders proper file and folder icons and badges',
+    (WidgetTester tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                MaterialFileIcon(name: 'main.dart'),
+                MaterialFileIcon(name: 'server.py'),
+                MaterialFileIcon(name: 'index.ts'),
+                MaterialFileIcon(name: 'pubspec.yaml'),
+                MaterialFileIcon(name: 'package.json'),
+                MaterialFileIcon(name: 'README.md'),
+                MaterialFileIcon(name: 'Dockerfile'),
+                MaterialFileIcon(name: 'lib', isDir: true),
+                MaterialFileIcon(name: 'test', isDir: true),
+                MaterialFileIcon(name: 'assets', isDir: true),
+              ],
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    // Verify icons are present
-    expect(find.byType(MaterialFileIcon), findsNWidgets(10));
-    // Verify badges (e.g. PY, TS, FL, JS)
-    expect(find.text('PY'), findsOneWidget);
-    expect(find.text('TS'), findsOneWidget);
-    expect(find.text('FL'), findsOneWidget);
-    expect(find.text('JS'), findsOneWidget);
-  });
+      // Verify icons are present
+      expect(find.byType(MaterialFileIcon), findsNWidgets(10));
+      // Verify badges (e.g. PY, TS, FL, JS)
+      expect(find.text('PY'), findsOneWidget);
+      expect(find.text('TS'), findsOneWidget);
+      expect(find.text('FL'), findsOneWidget);
+      expect(find.text('JS'), findsOneWidget);
+    },
+  );
 
   test('MaterialIconTheme resolves specific folder and file icons', () {
     final libFolder = MaterialIconTheme.getFolderIcon('lib');

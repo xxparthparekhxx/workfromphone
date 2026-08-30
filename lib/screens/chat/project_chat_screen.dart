@@ -1,21 +1,27 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:workfromphone/models/chat_message.dart';
 import 'package:workfromphone/models/conversation_session.dart';
 import 'package:workfromphone/models/llm_config.dart';
 import 'package:workfromphone/models/model_info.dart';
+import 'package:workfromphone/models/preview_entry.dart';
 import 'package:workfromphone/models/project_directory.dart';
 import 'package:workfromphone/models/task_stats.dart';
 import 'package:workfromphone/models/tool_event.dart';
 import 'package:workfromphone/screens/chat/conversation_history_sheet.dart';
 import 'package:workfromphone/screens/files/project_files_tab.dart';
 import 'package:workfromphone/screens/git/project_git_tab.dart';
+import 'package:workfromphone/screens/preview/project_preview_tab.dart';
 import 'package:workfromphone/screens/system/project_system_tab.dart';
 import 'package:workfromphone/screens/terminal/project_terminal_tab.dart';
 import 'package:workfromphone/services/api_service.dart';
 import 'package:workfromphone/services/chat_composer_service.dart';
 import 'package:workfromphone/services/chat_service.dart';
+import 'package:workfromphone/services/preview_session.dart';
 import 'package:workfromphone/services/storage_service.dart';
 import 'package:workfromphone/widgets/markdown_message_view.dart';
 import 'package:workfromphone/widgets/model_picker_sheet.dart';
@@ -40,6 +46,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
   final ChatService _chatService = ChatService();
   late TabController _tabController;
   int _activeTabIndex = 0;
+  bool _autoScroll = true;
 
   LLMConfig _llmConfig = const LLMConfig();
   List<ModelInfo> _availableModels = [];
@@ -60,10 +67,15 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
   int _toolCallsCount = 0;
   final bool _showStatsBar = true;
 
+  // Preview state
+  List<PreviewEntry> _previewEntries = [];
+  PreviewSession? _previewSession;
+  PreviewSessionState _previewState = PreviewSessionState.disconnected;
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(length: 6, vsync: this);
     _tabController.addListener(_handleTabChange);
     _inputCtrl.addListener(_handleComposerChanged);
     _loadConfig();
@@ -71,7 +83,15 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
 
   void _handleTabChange() {
     if (_activeTabIndex == _tabController.index) return;
+    final previous = _activeTabIndex;
     setState(() => _activeTabIndex = _tabController.index);
+    final session = _previewSession;
+    if (session == null) return;
+    if (_activeTabIndex == 5) {
+      unawaited(session.start());
+    } else if (previous == 5) {
+      unawaited(session.stop());
+    }
   }
 
   @override
@@ -83,6 +103,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
     _inputCtrl.dispose();
     _chatFocusNode.dispose();
     _scrollCtrl.dispose();
+    _previewSession?.dispose();
     super.dispose();
   }
 
@@ -97,8 +118,36 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
         _llmConfig = cfg;
       });
     }
+    _ensurePreviewSession(cfg);
     await _initConversationSession();
     _fetchModelsList();
+  }
+
+  void _ensurePreviewSession(LLMConfig cfg) {
+    if (cfg.backendUrl.trim().isEmpty) {
+      _previewSession?.dispose();
+      _previewSession = null;
+      return;
+    }
+    _previewSession?.dispose();
+    final session = PreviewSession(
+      backendUrl: cfg.backendUrl,
+      accessToken: cfg.backendAccessToken,
+      projectPath: widget.project.path,
+      onEntries: (entries) {
+        if (!mounted) return;
+        setState(() => _previewEntries = entries);
+      },
+      onStateChange: (state) {
+        if (!mounted) return;
+        setState(() => _previewState = state);
+      },
+      onError: (_) {},
+    );
+    _previewSession = session;
+    if (_activeTabIndex == 5) {
+      unawaited(session.start());
+    }
   }
 
   Future<void> _initConversationSession() async {
@@ -134,7 +183,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
         _messages.addAll(session.messages);
         _stats = session.stats;
       });
-      _scrollToBottom();
+      _scrollToBottom(force: true, animated: false);
     }
   }
 
@@ -200,7 +249,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
         _isRunning = false;
         _currentStatus = null;
       });
-      _scrollToBottom();
+      _scrollToBottom(force: true, animated: false);
     }
   }
 
@@ -266,14 +315,22 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
     }
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom({bool force = false, bool animated = false}) {
+    if (!_autoScroll && !force) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollCtrl.hasClients) {
+      if (!_scrollCtrl.hasClients) return;
+      if (!_autoScroll && !force) return;
+      final pos = _scrollCtrl.position;
+      if (pos.maxScrollExtent <= 0) return;
+
+      if (animated) {
         _scrollCtrl.animateTo(
-          _scrollCtrl.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 250),
+          pos.maxScrollExtent,
+          duration: const Duration(milliseconds: 150),
           curve: Curves.easeOut,
         );
+      } else {
+        _scrollCtrl.jumpTo(pos.maxScrollExtent);
       }
     });
   }
@@ -335,6 +392,10 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
             _inputCtrl.clear();
             _stopCurrentTask();
             return;
+          case ChatCommandAction.openPreview:
+            _inputCtrl.clear();
+            _handleManualPreviewRegister(parsed.arguments);
+            return;
           case ChatCommandAction.sendPrompt:
             text = command.expand(parsed.arguments);
         }
@@ -394,6 +455,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
     }
 
     setState(() {
+      _autoScroll = true;
       _messages.add(userMsg);
       _messages.add(assistantMsg);
       _isRunning = true;
@@ -414,7 +476,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
     });
 
     _saveCurrentSession();
-    _scrollToBottom();
+    _scrollToBottom(force: true, animated: true);
 
     _chatService.runTask(
       backendUrl: _llmConfig.backendUrl,
@@ -427,7 +489,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
             _currentStatus = status;
             assistantMsg.statusMessage = status;
           });
-          _scrollToBottom();
+          _scrollToBottom(force: false, animated: false);
         }
       },
       onChunk: (chunk) {
@@ -442,7 +504,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
               : 0.0;
 
           setState(() {
-            assistantMsg.content += chunk;
+            assistantMsg.appendChunk(chunk);
             _stats = _stats.copyWith(
               promptTokens: basePromptTokens + estimatedPromptTokens,
               completionTokens: baseCompletionTokens + completionTokens,
@@ -455,14 +517,14 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
               usageIsEstimated: true,
             );
           });
-          _scrollToBottom();
+          _scrollToBottom(force: false, animated: false);
         }
       },
       onToolCallStart: (toolName, args) {
         if (mounted) {
           _toolCallsCount++;
           setState(() {
-            assistantMsg.toolEvents.add(
+            assistantMsg.addToolEvent(
               ToolEvent(toolName: toolName, args: args, isExecuting: true),
             );
             _currentStatus = 'Executing $toolName...';
@@ -470,7 +532,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
               toolCallsCount: baseToolCalls + _toolCallsCount,
             );
           });
-          _scrollToBottom();
+          _scrollToBottom(force: false, animated: false);
         }
       },
       onToolCallResult: (toolName, output) {
@@ -485,7 +547,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
             lastTool.isError = output.startsWith('Error:');
             _currentStatus = 'Tool completed';
           });
-          _scrollToBottom();
+          _scrollToBottom(force: false, animated: false);
         }
       },
       onUsage: (usage) {
@@ -553,7 +615,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
             );
           });
           _saveCurrentSession();
-          _scrollToBottom();
+          _scrollToBottom(force: false, animated: true);
         }
       },
       onError: (err) {
@@ -568,7 +630,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
             _stats = _stats.copyWith(isStreaming: false);
           });
           _saveCurrentSession();
-          _scrollToBottom();
+          _scrollToBottom(force: true, animated: true);
         }
       },
     );
@@ -599,6 +661,50 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
     );
+  }
+
+  Future<void> _handleManualPreviewRegister(String arguments) async {
+    final parts = arguments.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty || parts.first.isEmpty) {
+      _showComposerMessage(
+        'Usage: /preview <port> [label]  '
+        '(e.g. /preview 8080 vite)',
+      );
+      return;
+    }
+    final port = int.tryParse(parts.first);
+    if (port == null || port < 1 || port > 65535) {
+      _showComposerMessage('Port must be a number between 1 and 65535.');
+      return;
+    }
+    final label = parts.length > 1
+        ? parts.sublist(1).join(' ').trim()
+        : 'Port $port';
+    final backendUrl = _llmConfig.backendUrl.trim();
+    if (backendUrl.isEmpty) {
+      _showComposerMessage('Configure a backend URL first.');
+      return;
+    }
+    try {
+      final entry = await ApiService.registerPreview(
+        backendUrl,
+        projectPath: widget.project.path,
+        port: port,
+        label: label,
+      );
+      _showComposerMessage(
+        'Registered "${entry.label}" on port ${entry.port}.',
+      );
+      _switchToPreviewTab();
+    } catch (error) {
+      _showComposerMessage('Failed to register preview: $error');
+    }
+  }
+
+  void _switchToPreviewTab() {
+    if (!_tabController.indexIsChanging) {
+      _tabController.animateTo(5);
+    }
   }
 
   void _showCommandsSheet() {
@@ -882,109 +988,154 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
   Widget _buildMessageBubble(ChatMessage msg) {
     final isUser = msg.role == MessageRole.user;
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
 
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.88,
-        ),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+      decoration: BoxDecoration(
+        color: isUser
+            ? (isDark
+                  ? theme.colorScheme.surfaceContainerHighest.withValues(
+                      alpha: 0.35,
+                    )
+                  : theme.colorScheme.surfaceContainerHighest.withValues(
+                      alpha: 0.5,
+                    ))
+            : (isDark
+                  ? theme.colorScheme.surfaceContainerLow.withValues(alpha: 0.6)
+                  : theme.colorScheme.surface),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
           color: isUser
-              ? theme.colorScheme.primary
-              : theme.colorScheme.surfaceContainerLow,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(isUser ? 16 : 4),
-            bottomRight: Radius.circular(isUser ? 4 : 16),
-          ),
-          border: isUser
-              ? null
-              : Border.all(
-                  color: theme.colorScheme.outlineVariant.withValues(
-                    alpha: 0.4,
+              ? theme.colorScheme.outlineVariant.withValues(alpha: 0.45)
+              : theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
+        ),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header Row: Avatar, Role/Model Label, Actions
+          Row(
+            children: [
+              if (isUser)
+                Container(
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primaryContainer,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    CupertinoIcons.person_fill,
+                    size: 13,
+                    color: theme.colorScheme.onPrimaryContainer,
+                  ),
+                )
+              else
+                ModelProviderAvatar(modelId: _llmConfig.model, size: 22),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  isUser
+                      ? 'You'
+                      : (_llmConfig.model.split('/').lastOrNull ??
+                            _llmConfig.model),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.bold,
+                    color: isUser
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.onSurface,
                   ),
                 ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Tool call events if any
-            if (msg.toolEvents.isNotEmpty) ...[
-              for (final te in msg.toolEvents) _buildToolEventCard(te),
-              const SizedBox(height: 6),
-            ],
-
-            // Content
-            if (msg.content.isNotEmpty) ...[
-              MarkdownMessageView(
-                data: msg.content,
-                isUser: isUser,
-                isStreaming: msg.isStreaming,
               ),
-              if (!isUser && !msg.isStreaming) ...[
-                const SizedBox(height: 6),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () {
-                      Clipboard.setData(ClipboardData(text: msg.content));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Message copied to clipboard'),
-                          duration: Duration(seconds: 2),
-                          behavior: SnackBarBehavior.floating,
+              if (!isUser && msg.isStreaming) ...[
+                const SizedBox(width: 6),
+                const SizedBox(
+                  width: 10,
+                  height: 10,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ],
+              if (msg.content.isNotEmpty && !msg.isStreaming)
+                InkWell(
+                  borderRadius: BorderRadius.circular(6),
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(text: msg.content));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          isUser ? 'Prompt copied' : 'Message copied',
                         ),
-                      );
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
+                        duration: const Duration(seconds: 2),
+                        behavior: SnackBarBehavior.floating,
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            CupertinoIcons.doc_on_doc,
-                            size: 13,
+                    );
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          CupertinoIcons.doc_on_doc,
+                          size: 12,
+                          color: theme.colorScheme.onSurfaceVariant.withValues(
+                            alpha: 0.8,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Copy',
+                          style: TextStyle(
+                            fontSize: 11,
                             color: theme.colorScheme.onSurfaceVariant
                                 .withValues(alpha: 0.8),
                           ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Copy',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: theme.colorScheme.onSurfaceVariant
-                                  .withValues(alpha: 0.8),
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-              ],
             ],
+          ),
+          const SizedBox(height: 10),
 
-            // Live status loader
-            if (msg.isStreaming && msg.statusMessage != null) ...[
-              const SizedBox(height: 6),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(
-                    width: 12,
-                    height: 12,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
+          // Interleaved chronological elements (Text thoughts, Tool calls, Follow-up explanations)
+          for (final element in msg.elements) ...[
+            if (element is TextChatElement && element.text.isNotEmpty) ...[
+              MarkdownMessageView(
+                data: element.text,
+                isUser: isUser,
+                isStreaming: msg.isStreaming,
+              ),
+              const SizedBox(height: 8),
+            ] else if (element is ToolChatElement) ...[
+              _buildToolEventCard(element.event),
+              const SizedBox(height: 8),
+            ],
+          ],
+
+          // Live status loader
+          if (msg.isStreaming && msg.statusMessage != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
                     msg.statusMessage!,
                     style: TextStyle(
                       fontSize: 12,
@@ -992,11 +1143,11 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -1259,13 +1410,62 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
           )
         else
           Expanded(
-            child: ListView.builder(
-              controller: _scrollCtrl,
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) {
-                return _buildMessageBubble(_messages[index]);
-              },
+            child: Stack(
+              children: [
+                NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (notification is UserScrollNotification) {
+                      if (notification.direction == ScrollDirection.forward) {
+                        if (_autoScroll) {
+                          setState(() => _autoScroll = false);
+                        }
+                      }
+                    }
+                    if (_scrollCtrl.hasClients) {
+                      final pos = _scrollCtrl.position;
+                      if (pos.pixels >= pos.maxScrollExtent - 40) {
+                        if (!_autoScroll) {
+                          setState(() => _autoScroll = true);
+                        }
+                      }
+                    }
+                    return false;
+                  },
+                  child: ListView.builder(
+                    controller: _scrollCtrl,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    itemCount: _messages.length,
+                    itemBuilder: (context, index) {
+                      return _buildMessageBubble(_messages[index]);
+                    },
+                  ),
+                ),
+                if (!_autoScroll)
+                  Positioned(
+                    right: 16,
+                    bottom: 12,
+                    child: Material(
+                      elevation: 3,
+                      shape: const CircleBorder(),
+                      color: theme.colorScheme.surfaceContainerHighest,
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: () {
+                          setState(() => _autoScroll = true);
+                          _scrollToBottom(force: true, animated: true);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          child: Icon(
+                            CupertinoIcons.chevron_down,
+                            size: 18,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
 
@@ -1501,6 +1701,12 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
                 child: Icon(CupertinoIcons.heart, size: 20),
               ),
             ),
+            Tab(
+              icon: Tooltip(
+                message: 'Preview',
+                child: Icon(CupertinoIcons.globe, size: 20),
+              ),
+            ),
           ],
         ),
       ),
@@ -1526,6 +1732,13 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
             accessToken: _llmConfig.backendAccessToken,
             stats: _stats,
             active: _activeTabIndex == 4,
+          ),
+          ProjectPreviewTab(
+            backendUrl: _llmConfig.backendUrl,
+            accessToken: _llmConfig.backendAccessToken,
+            entries: _previewEntries,
+            connectionState: _previewState,
+            active: _activeTabIndex == 5,
           ),
         ],
       ),

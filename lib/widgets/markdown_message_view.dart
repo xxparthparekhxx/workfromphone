@@ -38,25 +38,19 @@ class MarkdownMessageView extends StatelessWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    final defaultTextColor = isUser
-        ? theme.colorScheme.onPrimary
-        : theme.colorScheme.onSurface;
+    final defaultTextColor = theme.colorScheme.onSurface;
 
     final baseStyle =
         textStyle ??
         TextStyle(color: defaultTextColor, fontSize: 14.5, height: 1.45);
 
-    final codeBlockBackground = isUser
-        ? (isDark
-              ? Colors.black.withValues(alpha: 0.3)
-              : Colors.black.withValues(alpha: 0.15))
-        : (isDark
-              ? theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.7)
-              : const Color(0xFF1E1E2E));
+    final codeBlockBackground = isDark
+        ? theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.7)
+        : const Color(0xFF1E1E2E);
 
-    final codeBlockTextColor = isUser
-        ? theme.colorScheme.onPrimary
-        : (isDark ? theme.colorScheme.onSurface : const Color(0xFFCDD6F4));
+    final codeBlockTextColor = isDark
+        ? theme.colorScheme.onSurface
+        : const Color(0xFFCDD6F4);
 
     final styleSheet = GptMarkdownStyleSheet(
       codeBlock: CodeBlockStyle(
@@ -72,41 +66,33 @@ class MarkdownMessageView extends StatelessWidget {
         languageStyle: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.bold,
-          color: isUser
-              ? theme.colorScheme.onPrimary.withValues(alpha: 0.9)
-              : (isDark ? theme.colorScheme.primary : const Color(0xFF89B4FA)),
+          color: isDark ? theme.colorScheme.primary : const Color(0xFF89B4FA),
         ),
       ),
       inlineCode: InlineCodeStyle(
         fontSizeFactor: 0.92,
-        color: isUser
-            ? theme.colorScheme.onPrimary
-            : (isDark ? theme.colorScheme.primary : theme.colorScheme.primary),
-        backgroundColor: isUser
-            ? Colors.white.withValues(alpha: 0.2)
-            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
-        borderColor: isUser
-            ? Colors.white.withValues(alpha: 0.35)
-            : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+        color: isDark ? theme.colorScheme.primary : theme.colorScheme.primary,
+        backgroundColor: isDark
+            ? theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.7)
+            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderColor: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
         borderRadius: const Radius.circular(4),
       ),
       link: LinkStyle(
-        color: isUser ? theme.colorScheme.onPrimary : theme.colorScheme.primary,
+        color: theme.colorScheme.primary,
         decoration: TextDecoration.underline,
         fontWeight: FontWeight.w600,
       ),
       blockQuote: BlockQuoteStyle(
-        barColor: isUser
-            ? theme.colorScheme.onPrimary.withValues(alpha: 0.7)
-            : theme.colorScheme.primary,
+        barColor: theme.colorScheme.primary,
         barWidth: 3.5,
         padding: const EdgeInsets.only(left: 12, top: 4, bottom: 4),
       ),
       table: TableStyle(
         borderColor: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-        headerBackground: isUser
-            ? Colors.white.withValues(alpha: 0.15)
-            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        headerBackground: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: 0.5,
+        ),
       ),
     );
 

@@ -179,8 +179,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _saveSettings() async {
     final backendUrl = _backendUrlCtrl.text.trim();
-    final accessToken =
-        backendUrl == _loadedBackendUrl ? _backendAccessToken : '';
+    final accessToken = backendUrl == _loadedBackendUrl
+        ? _backendAccessToken
+        : '';
     final updated = LLMConfig(
       backendUrl: backendUrl,
       baseUrl: _baseUrlCtrl.text.trim(),

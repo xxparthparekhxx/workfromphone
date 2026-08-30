@@ -6,6 +6,7 @@ enum ChatCommandAction {
   newConversation,
   chooseModel,
   stopTask,
+  openPreview,
 }
 
 class ChatSlashCommand {
@@ -104,6 +105,12 @@ class ChatComposerService {
       description: 'Find syntax and lint errors',
       action: ChatCommandAction.sendPrompt,
       prompt: 'Check the project for syntax, analysis, and lint errors.',
+    ),
+    ChatSlashCommand(
+      name: 'preview',
+      description: 'Manually register a local dev server port',
+      action: ChatCommandAction.openPreview,
+      prompt: '',
     ),
   ];
 

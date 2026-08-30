@@ -4,7 +4,9 @@ import 'package:workfromphone/models/task_stats.dart';
 import 'package:workfromphone/widgets/task_stats_bar.dart';
 
 void main() {
-  testWidgets('TaskStatsBar displays TPS, context ratio, and tools correctly', (WidgetTester tester) async {
+  testWidgets('TaskStatsBar displays TPS, context ratio, and tools correctly', (
+    WidgetTester tester,
+  ) async {
     const stats = TaskStats(
       totalTokens: 12450,
       promptTokens: 8000,
@@ -18,9 +20,7 @@ void main() {
 
     await tester.pumpWidget(
       const MaterialApp(
-        home: Scaffold(
-          body: TaskStatsBar(stats: stats),
-        ),
+        home: Scaffold(body: TaskStatsBar(stats: stats)),
       ),
     );
     await tester.pumpAndSettle();

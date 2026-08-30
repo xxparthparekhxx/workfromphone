@@ -44,92 +44,106 @@ void main() {
     expect(restored.formattedTime, isNotEmpty);
   });
 
-  test('StorageService persists and retrieves multiple conversations per project', () async {
-    const projectPath = '/home/user/my_project';
+  test(
+    'StorageService persists and retrieves multiple conversations per project',
+    () async {
+      const projectPath = '/home/user/my_project';
 
-    final session1 = ConversationSession(
-      id: 'conv_1',
-      projectPath: projectPath,
-      title: 'Setup Database',
-      model: 'anthropic/claude-3.7-sonnet',
-    );
+      final session1 = ConversationSession(
+        id: 'conv_1',
+        projectPath: projectPath,
+        title: 'Setup Database',
+        model: 'anthropic/claude-3.7-sonnet',
+      );
 
-    final session2 = ConversationSession(
-      id: 'conv_2',
-      projectPath: projectPath,
-      title: 'Refactor UI',
-      model: 'google/gemini-2.0-flash',
-    );
+      final session2 = ConversationSession(
+        id: 'conv_2',
+        projectPath: projectPath,
+        title: 'Refactor UI',
+        model: 'google/gemini-2.0-flash',
+      );
 
-    await StorageService.saveConversation(projectPath, session1);
-    await StorageService.saveConversation(projectPath, session2);
-    await StorageService.saveActiveConversationId(projectPath, 'conv_2');
+      await StorageService.saveConversation(projectPath, session1);
+      await StorageService.saveConversation(projectPath, session2);
+      await StorageService.saveActiveConversationId(projectPath, 'conv_2');
 
-    final list = await StorageService.loadConversations(projectPath);
-    expect(list.length, 2);
+      final list = await StorageService.loadConversations(projectPath);
+      expect(list.length, 2);
 
-    final activeId = await StorageService.loadActiveConversationId(projectPath);
-    expect(activeId, 'conv_2');
+      final activeId = await StorageService.loadActiveConversationId(
+        projectPath,
+      );
+      expect(activeId, 'conv_2');
 
-    await StorageService.deleteConversation(projectPath, 'conv_1');
-    final afterDelete = await StorageService.loadConversations(projectPath);
-    expect(afterDelete.length, 1);
-    expect(afterDelete.first.id, 'conv_2');
-  });
+      await StorageService.deleteConversation(projectPath, 'conv_1');
+      final afterDelete = await StorageService.loadConversations(projectPath);
+      expect(afterDelete.length, 1);
+      expect(afterDelete.first.id, 'conv_2');
+    },
+  );
 
-  testWidgets('ConversationHistorySheet renders conversations list and handles selection', (WidgetTester tester) async {
-    final project = ProjectDirectory(
-      name: 'flutter_app',
-      path: '/home/user/flutter_app',
-      lastOpened: DateTime.now(),
-    );
+  testWidgets(
+    'ConversationHistorySheet renders conversations list and handles selection',
+    (WidgetTester tester) async {
+      final project = ProjectDirectory(
+        name: 'flutter_app',
+        path: '/home/user/flutter_app',
+        lastOpened: DateTime.now(),
+      );
 
-    final session = ConversationSession(
-      id: 'conv_abc',
-      projectPath: project.path,
-      title: 'Implement Dark Theme',
-      model: 'anthropic/claude-3.7-sonnet',
-      messages: [
-        ChatMessage(id: '1', role: MessageRole.user, content: 'Add dark mode theme support'),
-      ],
-    );
+      final session = ConversationSession(
+        id: 'conv_abc',
+        projectPath: project.path,
+        title: 'Implement Dark Theme',
+        model: 'anthropic/claude-3.7-sonnet',
+        messages: [
+          ChatMessage(
+            id: '1',
+            role: MessageRole.user,
+            content: 'Add dark mode theme support',
+          ),
+        ],
+      );
 
-    await StorageService.saveConversation(project.path, session);
+      await StorageService.saveConversation(project.path, session);
 
-    ConversationSession? selectedSession;
+      ConversationSession? selectedSession;
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: ConversationHistorySheet(
-            project: project,
-            activeConversationId: 'conv_abc',
-            onSelectConversation: (s) => selectedSession = s,
-            onNewConversation: () {},
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ConversationHistorySheet(
+              project: project,
+              activeConversationId: 'conv_abc',
+              onSelectConversation: (s) => selectedSession = s,
+              onNewConversation: () {},
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    // Verify header and new chat button
-    expect(find.text('Conversations'), findsOneWidget);
-    expect(find.text('New Chat'), findsOneWidget);
+      // Verify header and new chat button
+      expect(find.text('Conversations'), findsOneWidget);
+      expect(find.text('New Chat'), findsOneWidget);
 
-    // Verify conversation card with active indicator
-    expect(find.text('Implement Dark Theme'), findsOneWidget);
-    expect(find.text('ACTIVE'), findsOneWidget);
-    expect(find.text('Add dark mode theme support'), findsOneWidget);
+      // Verify conversation card with active indicator
+      expect(find.text('Implement Dark Theme'), findsOneWidget);
+      expect(find.text('ACTIVE'), findsOneWidget);
+      expect(find.text('Add dark mode theme support'), findsOneWidget);
 
-    // Tap on the conversation card
-    await tester.tap(find.text('Implement Dark Theme'));
-    await tester.pumpAndSettle();
+      // Tap on the conversation card
+      await tester.tap(find.text('Implement Dark Theme'));
+      await tester.pumpAndSettle();
 
-    expect(selectedSession, isNotNull);
-    expect(selectedSession!.id, 'conv_abc');
-  });
+      expect(selectedSession, isNotNull);
+      expect(selectedSession!.id, 'conv_abc');
+    },
+  );
 
-  testWidgets('ConversationHistorySheet triggers new conversation callback', (WidgetTester tester) async {
+  testWidgets('ConversationHistorySheet triggers new conversation callback', (
+    WidgetTester tester,
+  ) async {
     final project = ProjectDirectory(
       name: 'flutter_app',
       path: '/home/user/flutter_app',
