@@ -20,6 +20,7 @@ import 'package:workfromphone/services/storage_service.dart';
 import 'package:workfromphone/widgets/markdown_message_view.dart';
 import 'package:workfromphone/widgets/model_picker_sheet.dart';
 import 'package:workfromphone/widgets/task_stats_bar.dart';
+import 'package:workfromphone/widgets/model_provider_avatar.dart';
 
 class ProjectChatScreen extends StatefulWidget {
   final ProjectDirectory project;
@@ -1327,7 +1328,10 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
                   children: [
                     ActionChip(
                       key: const Key('chat-model-picker'),
-                      avatar: const Icon(CupertinoIcons.bolt, size: 14),
+                      avatar: ModelProviderAvatar(
+                        modelId: _llmConfig.model,
+                        size: 18,
+                      ),
                       label: Text(
                         _llmConfig.model.split('/').lastOrNull ??
                             _llmConfig.model,

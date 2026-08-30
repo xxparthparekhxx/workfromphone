@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:workfromphone/models/model_info.dart';
+import 'package:workfromphone/widgets/model_provider_avatar.dart';
 
 class ModelPickerSheet extends StatefulWidget {
   final String selectedModelId;
@@ -537,14 +538,39 @@ class _ModelPickerSheetState extends State<ModelPickerSheet> {
                                 horizontal: 12,
                                 vertical: 4,
                               ),
-                              leading: Icon(
-                                isSelected
-                                    ? CupertinoIcons.check_mark_circled
-                                    : CupertinoIcons.circle,
-                                color: isSelected
-                                    ? theme.colorScheme.primary
-                                    : null,
-                                size: 22,
+                              leading: SizedBox(
+                                width: 34,
+                                height: 34,
+                                child: Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: ModelProviderAvatar(
+                                        key: ValueKey('model-logo-${m.id}'),
+                                        modelId: m.id,
+                                        size: 30,
+                                      ),
+                                    ),
+                                    if (isSelected)
+                                      Positioned(
+                                        right: 0,
+                                        bottom: 0,
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            color: theme.colorScheme.surface,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Icon(
+                                            CupertinoIcons
+                                                .check_mark_circled_solid,
+                                            color: theme.colorScheme.primary,
+                                            size: 15,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
                               title: Row(
                                 children: [
