@@ -1,6 +1,7 @@
 import asyncio
 from importlib import import_module
 import json
+import subprocess
 import time
 from pathlib import Path
 
@@ -11,11 +12,13 @@ from fastapi.testclient import TestClient
 from backend.core.config import settings
 from backend.main import app
 from backend.schemas.llm import ChatMessage, ChatTaskRequest, LLMConfig
+from backend.services.git_service import git_service
 from backend.services.harness_service import harness_service
 from backend.services.terminal_service import terminal_service
 
 harness_service_module = import_module("backend.services.harness_service")
 main_module = import_module("backend.main")
+system_service_module = import_module("backend.services.system_service")
 
 client = TestClient(app)
 
@@ -631,3 +634,98 @@ def test_search_project_accepts_a_query_starting_with_a_dash(tmp_path: Path):
         ),
     )
     assert "flags.txt" in output
+
+
+def _run_git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest.fixture
+def git_repo(tmp_path: Path) -> Path:
+    _run_git(tmp_path, "init", "-q", ".")
+    _run_git(tmp_path, "config", "user.email", "test@example.com")
+    _run_git(tmp_path, "config", "user.name", "Test")
+    (tmp_path / "old name.txt").write_text("a\n", encoding="utf-8")
+    (tmp_path / "café.txt").write_text("b\n", encoding="utf-8")
+    (tmp_path / "plain.txt").write_text("c\n", encoding="utf-8")
+    _run_git(tmp_path, "add", "-A")
+    _run_git(tmp_path, "commit", "-qm", "init")
+    return tmp_path
+
+
+def test_git_status_reports_renames_as_usable_paths(git_repo: Path):
+    _run_git(git_repo, "mv", "old name.txt", "new name.txt")
+
+    status = asyncio.run(git_service.get_status(str(git_repo)))
+    assert status.is_repo
+
+    renamed = [change for change in status.staged if change.status == "R"]
+    assert len(renamed) == 1
+    # The path must be the new name alone, not "old -> new", so that it can be
+    # handed straight back to git diff/restore.
+    assert renamed[0].path == "new name.txt"
+    assert renamed[0].old_path == "old name.txt"
+
+    diff = asyncio.run(
+        git_service.get_diff(str(git_repo), renamed[0].path, staged=True),
+    )
+    assert diff.diff.strip(), "the reported path did not resolve to a diff"
+
+
+def test_git_status_reports_unquoted_non_ascii_paths(git_repo: Path):
+    (git_repo / "café.txt").write_text("b\nchanged\n", encoding="utf-8")
+    (git_repo / "unt räcked.txt").write_text("d\n", encoding="utf-8")
+    (git_repo / "plain.txt").unlink()
+
+    status = asyncio.run(git_service.get_status(str(git_repo)))
+
+    unstaged = {change.path for change in status.unstaged}
+    untracked = {change.path for change in status.untracked}
+    # git C-quotes these without -z, e.g. "caf\303\251.txt".
+    assert "café.txt" in unstaged
+    assert "plain.txt" in unstaged
+    assert "unt räcked.txt" in untracked
+    assert not any('\\' in path or path.startswith('"') for path in unstaged | untracked)
+
+    diff = asyncio.run(git_service.get_diff(str(git_repo), "café.txt"))
+    assert "changed" in diff.diff
+
+
+def test_git_status_preserves_surrounding_spaces_in_paths(git_repo: Path):
+    (git_repo / " padded .txt").write_text("e\n", encoding="utf-8")
+
+    status = asyncio.run(git_service.get_status(str(git_repo)))
+
+    assert " padded .txt" in {change.path for change in status.untracked}
+
+
+def test_git_status_is_clean_on_a_fresh_checkout(git_repo: Path):
+    status = asyncio.run(git_service.get_status(str(git_repo)))
+    assert status.is_repo
+    assert status.is_clean
+    assert status.branch
+    assert not status.staged and not status.unstaged and not status.untracked
+
+
+def test_top_processes_are_ranked_by_measured_cpu():
+    service = system_service_module.SystemService()
+    assert not service._processes_primed
+
+    snapshot = asyncio.run(service.snapshot())
+    processes = snapshot.top_processes
+
+    assert processes
+    assert service._processes_primed
+    # Priming means the very first snapshot already carries real readings
+    # rather than the all-zero values psutil returns for a first sample.
+    assert any(process.cpu_percent > 0.0 for process in processes)
+    assert processes == sorted(
+        processes,
+        key=lambda process: (process.cpu_percent, process.memory_percent),
+        reverse=True,
+    )

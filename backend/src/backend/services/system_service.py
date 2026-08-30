@@ -57,6 +57,7 @@ class SystemService:
         self._last_net_sent = 0
         self._last_net_received = 0
         self._gpu_cache: tuple[float, list[GpuMetrics]] = (0.0, [])
+        self._processes_primed = False
 
     @staticmethod
     def _cpu_model() -> str | None:
@@ -152,8 +153,20 @@ class SystemService:
                 )
         return temperatures
 
-    @staticmethod
-    def _top_processes(limit: int = 8) -> list[ProcessMetric]:
+    def _top_processes(self, limit: int = 8) -> list[ProcessMetric]:
+        if not self._processes_primed:
+            # A process's first cpu_percent() reading is always 0.0, because
+            # there is no earlier sample to measure against. Without priming,
+            # the first snapshot ranks every process at 0% and the "top by
+            # CPU" list degenerates into an arbitrary order. psutil keeps its
+            # Process objects cached between process_iter() calls, so one
+            # throwaway pass plus a short gap gives real numbers from the
+            # first snapshot onwards.
+            for _ in psutil.process_iter(["cpu_percent"]):
+                pass
+            time.sleep(0.1)
+            self._processes_primed = True
+
         processes: list[ProcessMetric] = []
         attributes = ["pid", "name", "status", "cpu_percent", "memory_percent", "memory_info"]
         for process in psutil.process_iter(attributes):

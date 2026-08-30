@@ -53,9 +53,14 @@ class GitService:
         if code != 0 or out.strip() != "true":
             return GitStatusResponse(is_repo=False)
 
-        # Get branch and file status in porcelain format
+        # Get branch and file status in porcelain format. -z is what keeps
+        # paths usable: without it git C-quotes any path holding a space or a
+        # non-ASCII byte ("caf\303\251.txt") and renders a rename as
+        # `old -> new`, so the parsed string cannot be handed back to git.
+        # With -z paths are raw and NUL-separated, and a rename is emitted as
+        # the new path followed by the original as its own field.
         code, status_out, _ = await cls._run_git_cmd(
-            project_root, ["status", "--porcelain=v1", "-b", "-uall"]
+            project_root, ["status", "--porcelain=v1", "-b", "-uall", "-z"]
         )
 
         branch = "HEAD"
@@ -66,10 +71,11 @@ class GitService:
         unstaged: List[GitFileChange] = []
         untracked: List[GitFileChange] = []
 
-        lines = status_out.splitlines()
-        for line in lines:
-            if not line:
-                continue
+        entries = [entry for entry in status_out.split("\0") if entry]
+        cursor = 0
+        while cursor < len(entries):
+            line = entries[cursor]
+            cursor += 1
             if line.startswith("## "):
                 # Header: e.g. ## master...origin/master [ahead 1, behind 2] or ## Initial commit on master
                 header = line[3:].strip()
@@ -96,27 +102,37 @@ class GitService:
                     continue
                 x = line[0]
                 y = line[1]
-                path = line[3:].strip()
+                # Not stripped: leading and trailing spaces are legal in a
+                # filename and git reports them verbatim.
+                path = line[3:]
+
+                old_path = None
+                if x in ["R", "C"] and cursor < len(entries):
+                    # A rename or copy carries its source path as the next field.
+                    old_path = entries[cursor]
+                    cursor += 1
 
                 if x == "?" and y == "?":
                     untracked.append(GitFileChange(path=path, status="U", is_staged=False))
                 else:
                     # Index (staged) change
-                    if x in ["M", "A", "D", "R", "C"]:
+                    if x in ["M", "A", "D", "R", "C", "T"]:
                         staged.append(
                             GitFileChange(
                                 path=path,
                                 status=x,
                                 is_staged=True,
+                                old_path=old_path,
                             )
                         )
                     # Working tree (unstaged) change
-                    if y in ["M", "D"]:
+                    if y in ["M", "D", "T"]:
                         unstaged.append(
                             GitFileChange(
                                 path=path,
                                 status=y,
                                 is_staged=False,
+                                old_path=old_path,
                             )
                         )
 
