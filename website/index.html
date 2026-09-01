@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WorkFromPhone — Turn your phone into a Linux developer workstation</title>
+  <meta name="description" content="WorkFromPhone: Flutter mobile client & FastAPI Linux backend service. Real-time system monitoring, persistent PTY terminals, sandboxed files, Git manager, and autonomous AI coding harness.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Navigation Header -->
+  <header class="navbar">
+    <div class="nav-container">
+      <a href="#" class="logo">
+        <span class="logo-icon">⚡</span>
+        <span class="logo-text">Work<span class="highlight">FromPhone</span></span>
+      </a>
+      <nav class="nav-links">
+        <a href="#downloads">Downloads</a>
+        <a href="#quick-install">Quick Install</a>
+        <a href="#features">Features</a>
+        <a href="#manual-setup">Manual Setup</a>
+        <a href="#api">API</a>
+        <a href="https://github.com/xxparthparekhxx/workfromphone" target="_blank" rel="noopener" class="github-btn">
+          <svg class="github-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="hero-glow"></div>
+    <div class="container hero-content">
+      <div class="badge-row">
+        <span class="pill-badge" id="release-badge">🚀 Release v0.1.0 Available</span>
+        <span class="pill-badge pill-purple">Linux x86_64 & ARM64</span>
+      </div>
+      <h1 class="hero-title">
+        Turn your phone into a full <span class="gradient-text">Linux Workstation</span>
+      </h1>
+      <p class="hero-subtitle">
+        Monitor real-time system metrics, manage files & Git repos, run interactive PTY shells, preview running web servers, and dispatch autonomous AI coding tasks directly from your phone.
+      </p>
+
+      <!-- Quick 1-Liner Box -->
+      <div class="terminal-install-box">
+        <div class="terminal-header">
+          <span class="dot red"></span>
+          <span class="dot yellow"></span>
+          <span class="dot green"></span>
+          <span class="terminal-title">Quick 1-Line Server Install (bash)</span>
+        </div>
+        <div class="terminal-body">
+          <span class="prompt">$</span>
+          <code id="one-liner-code">curl -fsSL https://raw.githubusercontent.com/xxparthparekhxx/workfromphone/master/scripts/install.sh | bash</code>
+          <button class="copy-btn" onclick="copySnippet('one-liner-code', this)" title="Copy to clipboard">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+            </svg>
+            <span>Copy</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="hero-actions">
+        <a href="#downloads" class="btn btn-primary">Download Binaries</a>
+        <a href="#manual-setup" class="btn btn-secondary">Installation Guide</a>
+        <a href="https://github.com/xxparthparekhxx/workfromphone" target="_blank" rel="noopener" class="btn btn-outline">Explore Codebase</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Direct Downloads Section -->
+  <section id="downloads" class="section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Standalone Backend Releases</h2>
+        <p class="section-subtitle">Precompiled standalone binaries. No Python or virtual environment required.</p>
+      </div>
+
+      <div class="download-grid">
+        <!-- Linux x86_64 -->
+        <div class="download-card">
+          <div class="card-header">
+            <div class="os-icon">🐧</div>
+            <div>
+              <h3 class="card-title">Linux x86_64</h3>
+              <p class="card-desc">Intel / AMD 64-bit Server & PC</p>
+            </div>
+          </div>
+          <div class="card-details">
+            <div class="detail-row">
+              <span class="label">Format:</span>
+              <span class="value">tar.gz standalone</span>
+            </div>
+            <div class="detail-row">
+              <span class="label">Version:</span>
+              <span class="value release-version">v0.1.0</span>
+            </div>
+            <div class="detail-row">
+              <span class="label">Size:</span>
+              <span class="value" id="size-x86_64">~19.6 MB</span>
+            </div>
+          </div>
+          <div class="card-actions">
+            <a id="btn-download-x86_64" href="https://github.com/xxparthparekhxx/workfromphone/releases/download/backend-v0.1.0/workfromphone-backend-linux-x86_64.tar.gz" class="btn btn-primary download-btn">
+              Download Linux (x86_64)
+            </a>
+            <button class="btn btn-outline copy-sha-btn" onclick="copyText('3f1261c0b6b42f3ba03a954c744ad7dedf399833814f55bc6010d533e90d3dae', this)">
+              Copy SHA-256
+            </button>
+          </div>
+        </div>
+
+        <!-- Linux aarch64 -->
+        <div class="download-card highlight-card">
+          <div class="card-header">
+            <div class="os-icon">⚡</div>
+            <div>
+              <h3 class="card-title">Linux aarch64 / ARM64</h3>
+              <p class="card-desc">Raspberry Pi, AWS Graviton, Apple Silicon VMs</p>
+            </div>
+          </div>
+          <div class="card-details">
+            <div class="detail-row">
+              <span class="label">Format:</span>
+              <span class="value">tar.gz standalone</span>
+            </div>
+            <div class="detail-row">
+              <span class="label">Version:</span>
+              <span class="value release-version">v0.1.0</span>
+            </div>
+            <div class="detail-row">
+              <span class="label">Size:</span>
+              <span class="value" id="size-aarch64">~19.5 MB</span>
+            </div>
+          </div>
+          <div class="card-actions">
+            <a id="btn-download-aarch64" href="https://github.com/xxparthparekhxx/workfromphone/releases/download/backend-v0.1.0/workfromphone-backend-linux-aarch64.tar.gz" class="btn btn-primary download-btn">
+              Download Linux (ARM64)
+            </a>
+            <button class="btn btn-outline copy-sha-btn" onclick="copyText('88cd6fe4e02210a7893b37e1ac9e87c2cbac1346a394f8b691b7c66c13ead481', this)">
+              Copy SHA-256
+            </button>
+          </div>
+        </div>
+
+        <!-- Manifest & Metadata -->
+        <div class="download-card">
+          <div class="card-header">
+            <div class="os-icon">📋</div>
+            <div>
+              <h3 class="card-title">Release Manifest</h3>
+              <p class="card-desc">JSON checksum manifest for automated provisioning</p>
+            </div>
+          </div>
+          <div class="card-details">
+            <div class="detail-row">
+              <span class="label">File:</span>
+              <span class="value">backend-manifest.json</span>
+            </div>
+            <div class="detail-row">
+              <span class="label">Verification:</span>
+              <span class="value">SHA-256 pinned</span>
+            </div>
+            <div class="detail-row">
+              <span class="label">Usage:</span>
+              <span class="value">Flutter Setup Wizard</span>
+            </div>
+          </div>
+          <div class="card-actions">
+            <a id="btn-download-manifest" href="https://github.com/xxparthparekhxx/workfromphone/releases/download/backend-v0.1.0/backend-manifest.json" class="btn btn-outline download-btn">
+              Download Manifest (JSON)
+            </a>
+            <a href="https://github.com/xxparthparekhxx/workfromphone/releases" target="_blank" rel="noopener" class="btn btn-secondary">
+              All GitHub Releases
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features Grid -->
+  <section id="features" class="section section-alt">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Built for Real Remote Development</h2>
+        <p class="section-subtitle">Everything you need to manage, debug, code, and deploy from your mobile device.</p>
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">📊</div>
+          <h3>Real-time System Monitor</h3>
+          <p>Live sub-second streaming of CPU per-core utilization, memory/swap, disk IO partitions, GPU usage, temperatures, and top consuming processes over WebSockets.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">💻</div>
+          <h3>Persistent PTY Terminals</h3>
+          <p>Interactive Linux pseudo-terminals with non-blocking I/O, xterm ANSI color rendering, window resizing, and sanitized subshell environment isolation.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🤖</div>
+          <h3>Autonomous AI Coding Harness</h3>
+          <p>Autonomous LLM agent loop equipped with tool calling: bash execution, file search, exact line edits, and dev server live preview registration.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">📁</div>
+          <h3>Sandboxed File Explorer</h3>
+          <p>Browse directories, view and edit files with syntax highlighting, and stream large files with binary-safe multipart chunked uploads.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🌿</div>
+          <h3>Full Git Subsystem</h3>
+          <p>Inspect status, stage/unstage lines and files, view side-by-side diffs, switch branches, commit, push, and pull directly from your phone.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🌐</div>
+          <h3>In-App Web Preview & Proxy</h3>
+          <p>Live reverse-proxy dev servers (Next.js, Vite, Flask, Flutter Web) into the Flutter in-app browser with SPA routing and SSRF protection.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🔒</div>
+          <h3>Encrypted SSH & Cloudflare Tunnels</h3>
+          <p>Seamless connection via loopback SSH tunnels or Cloudflare named tunnels without exposing backend ports to the public internet.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">📦</div>
+          <h3>Protected Artifact Sharing</h3>
+          <p>Publish build logs, test reports, or web artifacts with unique share tokens, optional numeric PIN protection, and sandboxed CSP headers.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Manual Setup & Tabs Section -->
+  <section id="manual-setup" class="section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Manual Installation & Server Setup</h2>
+        <p class="section-subtitle">Deploy on any Linux machine with systemd, standalone CLI, or custom environment variables.</p>
+      </div>
+
+      <div class="tabs-container">
+        <div class="tabs-header">
+          <button class="tab-btn active" onclick="switchTab(event, 'tab-quick')">⚡ 1-Line Script</button>
+          <button class="tab-btn" onclick="switchTab(event, 'tab-manual')">📦 Manual Binary</button>
+          <button class="tab-btn" onclick="switchTab(event, 'tab-systemd')">⚙️ Systemd Service</button>
+          <button class="tab-btn" onclick="switchTab(event, 'tab-cloudflare')">☁️ Cloudflare Tunnel</button>
+          <button class="tab-btn" onclick="switchTab(event, 'tab-flutter')">📱 Flutter App Setup</button>
+        </div>
+
+        <div class="tab-content active" id="tab-quick">
+          <p class="tab-description">The automated installer downloads the matching binary, validates the SHA-256 checksum, generates an access token, and sets up a systemd user service.</p>
+          <div class="code-block">
+            <div class="code-header">
+              <span>Terminal (Bash)</span>
+              <button class="copy-btn" onclick="copySnippet('snippet-quick', this)">Copy</button>
+            </div>
+            <pre><code id="snippet-quick">curl -fsSL https://raw.githubusercontent.com/xxparthparekhxx/workfromphone/master/scripts/install.sh | bash</code></pre>
+          </div>
+        </div>
+
+        <div class="tab-content" id="tab-manual">
+          <p class="tab-description">Download and extract the standalone binary manually to run it directly from your terminal.</p>
+          <div class="code-block">
+            <div class="code-header">
+              <span>Terminal (x86_64)</span>
+              <button class="copy-btn" onclick="copySnippet('snippet-manual', this)">Copy</button>
+            </div>
+            <pre><code id="snippet-manual"># 1. Create install directory
+mkdir -p ~/.local/share/workfromphone/current
+
+# 2. Download and unpack latest x86_64 binary
+curl -fsSL https://github.com/xxparthparekhxx/workfromphone/releases/download/backend-v0.1.0/workfromphone-backend-linux-x86_64.tar.gz | tar -xz -C ~/.local/share/workfromphone/current
+
+# 3. Make executable
+chmod 700 ~/.local/share/workfromphone/current/workfromphone-backend
+
+# 4. Run with an Access Token
+ACCESS_TOKEN="your-secure-random-token" PORT=8000 ~/.local/share/workfromphone/current/workfromphone-backend</code></pre>
+          </div>
+        </div>
+
+        <div class="tab-content" id="tab-systemd">
+          <p class="tab-description">Configure a user-level systemd service so the backend starts automatically on boot.</p>
+          <div class="code-block">
+            <div class="code-header">
+              <span>Create Systemd Service (~/.config/systemd/user/workfromphone-backend.service)</span>
+              <button class="copy-btn" onclick="copySnippet('snippet-systemd', this)">Copy</button>
+            </div>
+            <pre><code id="snippet-systemd"># 1. Create environment file
+mkdir -p ~/.config/workfromphone
+cat &lt;&lt;'EOF' &gt; ~/.config/workfromphone/backend.env
+HOST=127.0.0.1
+PORT=8000
+ACCESS_TOKEN=your-strong-random-token
+DEBUG=false
+EOF
+chmod 600 ~/.config/workfromphone/backend.env
+
+# 2. Create systemd user service unit
+mkdir -p ~/.config/systemd/user
+cat &lt;&lt;'EOF' &gt; ~/.config/systemd/user/workfromphone-backend.service
+[Unit]
+Description=WorkFromPhone Backend Service
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/workfromphone/backend.env
+ExecStart=%h/.local/share/workfromphone/current/workfromphone-backend
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+EOF
+
+# 3. Reload and start
+systemctl --user daemon-reload
+systemctl --user enable --now workfromphone-backend.service
+
+# 4. Check status
+systemctl --user status workfromphone-backend.service</code></pre>
+          </div>
+        </div>
+
+        <div class="tab-content" id="tab-cloudflare">
+          <p class="tab-description">Route traffic through a Cloudflare Tunnel for secure remote access without opening router firewall ports.</p>
+          <div class="code-block">
+            <div class="code-header">
+              <span>Cloudflare Tunnel Setup</span>
+              <button class="copy-btn" onclick="copySnippet('snippet-cf', this)">Copy</button>
+            </div>
+            <pre><code id="snippet-cf"># 1. Download cloudflared binary
+mkdir -p ~/.local/bin ~/.config/workfromphone
+curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o ~/.local/bin/cloudflared
+chmod 700 ~/.local/bin/cloudflared
+
+# 2. Save your tunnel token
+cat &lt;&lt;'EOF' &gt; ~/.config/workfromphone/cloudflared.env
+CLOUDFLARE_TUNNEL_TOKEN=eyJh...your-tunnel-token...
+EOF
+chmod 600 ~/.config/workfromphone/cloudflared.env
+
+# 3. Create systemd unit
+cat &lt;&lt;'EOF' &gt; ~/.config/systemd/user/workfromphone-tunnel.service
+[Unit]
+Description=WorkFromPhone Cloudflare Tunnel
+After=network-online.target workfromphone-backend.service
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/workfromphone/cloudflared.env
+ExecStart=%h/.local/bin/cloudflared tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+EOF
+
+# 4. Enable and start tunnel
+systemctl --user daemon-reload
+systemctl --user enable --now workfromphone-tunnel.service</code></pre>
+          </div>
+        </div>
+
+        <div class="tab-content" id="tab-flutter">
+          <p class="tab-description">Build and run the Flutter mobile app pointing to your release repository.</p>
+          <div class="code-block">
+            <div class="code-header">
+              <span>Flutter Build Command</span>
+              <button class="copy-btn" onclick="copySnippet('snippet-flutter', this)">Copy</button>
+            </div>
+            <pre><code id="snippet-flutter"># Build Android APK configured with your release repo
+flutter build apk --dart-define=WFP_BACKEND_RELEASE_REPO=xxparthparekhxx/workfromphone
+
+# Or run directly on connected device
+flutter run -d &lt;device-id&gt; --dart-define=WFP_BACKEND_RELEASE_REPO=xxparthparekhxx/workfromphone</code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- API Reference Matrix -->
+  <section id="api" class="section section-alt">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">API & WebSocket Endpoints</h2>
+        <p class="section-subtitle">High-performance FastAPI endpoints protected by constant-time Bearer token authentication.</p>
+      </div>
+
+      <div class="api-table-wrapper">
+        <table class="api-table">
+          <thead>
+            <tr>
+              <th>Protocol / Method</th>
+              <th>Endpoint</th>
+              <th>Auth</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge badge-get">GET</span></td>
+              <td><code>/api/v1/health</code></td>
+              <td><span class="tag-public">Public</span></td>
+              <td>Backend service status and version health check</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-get">GET</span></td>
+              <td><code>/api/v1/system/snapshot</code></td>
+              <td><span class="tag-auth">Bearer</span></td>
+              <td>Snapshot of CPU cores, RAM, Disk partitions, GPU metrics</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-ws">WS</span></td>
+              <td><code>/api/v1/system/ws</code></td>
+              <td><span class="tag-auth">Bearer</span></td>
+              <td>Sub-second real-time streaming system monitor feed</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-ws">WS</span></td>
+              <td><code>/api/v1/terminal/ws</code></td>
+              <td><span class="tag-auth">Bearer</span></td>
+              <td>Bidirectional persistent PTY interactive shell session</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-get">GET</span></td>
+              <td><code>/api/v1/fs/browse</code></td>
+              <td><span class="tag-auth">Bearer</span></td>
+              <td>Sandboxed project directory & file tree browsing</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-get">GET</span></td>
+              <td><code>/api/v1/git/diff</code></td>
+              <td><span class="tag-auth">Bearer</span></td>
+              <td>Working tree and staged unified Git diffs</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-post">POST</span></td>
+              <td><code>/api/v1/llm/chat</code></td>
+              <td><span class="tag-auth">Bearer</span></td>
+              <td>Autonomous LLM agent loop (SSE stream with tool calls)</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-any">ANY</span></td>
+              <td><code>/api/v1/preview/proxy/{id}/{path}</code></td>
+              <td><span class="tag-auth">Bearer</span></td>
+              <td>SSRF-protected reverse proxy for running web dev servers</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container footer-content">
+      <div class="footer-brand">
+        <span class="logo-icon">⚡</span>
+        <span class="logo-text">Work<span class="highlight">FromPhone</span></span>
+        <p class="footer-tagline">Open-source mobile-first Linux development workstation.</p>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/xxparthparekhxx/workfromphone" target="_blank" rel="noopener">GitHub Repository</a>
+        <a href="https://github.com/xxparthparekhxx/workfromphone/releases" target="_blank" rel="noopener">Releases & Manifests</a>
+        <a href="https://github.com/xxparthparekhxx/workfromphone/blob/master/AGENTS.md" target="_blank" rel="noopener">Architecture & AGENTS.md</a>
+        <a href="https://github.com/xxparthparekhxx/workfromphone/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+      </div>
+      <div class="footer-copyright">
+        <p>© 2026 WorkFromPhone. Created by <a href="https://github.com/xxparthparekhxx" target="_blank" rel="noopener">xxparthparekhxx</a>.</p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
