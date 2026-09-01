@@ -12,6 +12,7 @@ import termios
 import time
 from pathlib import Path
 from fastapi import WebSocket, WebSocketDisconnect
+from backend.core.security import sanitized_child_env
 from backend.schemas.terminal import TerminalRunRequest, TerminalRunResponse
 
 
@@ -48,7 +49,7 @@ class TerminalService:
 
     @classmethod
     def _get_process_env(cls) -> dict:
-        env = os.environ.copy()
+        env = sanitized_child_env()
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         env["FORCE_COLOR"] = "1"
@@ -63,7 +64,7 @@ class TerminalService:
 
     @classmethod
     def _get_pty_env(cls) -> dict:
-        env = os.environ.copy()
+        env = sanitized_child_env()
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         return env

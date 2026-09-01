@@ -312,7 +312,67 @@ class ApiService {
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     final rawList = data['models'] as List<dynamic>? ?? [];
     return rawList
-        .map((e) => ModelInfo.fromJson(e as Map<String, dynamic>))
+        .whereType<Map<String, dynamic>>()
+        .map(ModelInfo.fromJson)
+        .where((model) => model.id.isNotEmpty)
+        .toList();
+  }
+
+  /// Live models from the configured provider, via the backend then directly.
+  static Future<List<ModelInfo>> fetchProviderModels({
+    required String backendUrl,
+    required String baseUrl,
+    required String apiKey,
+  }) async {
+    Object? backendError;
+    try {
+      final list = await fetchModels(backendUrl, baseUrl, apiKey);
+      if (list.isNotEmpty) return list;
+    } catch (error) {
+      backendError = error;
+    }
+    try {
+      return await fetchRouterModels(baseUrl: baseUrl, apiKey: apiKey);
+    } catch (error) {
+      throw backendError ?? error;
+    }
+  }
+
+  /// Fetch models directly from OpenRouter or an OpenAI-compatible router.
+  static Future<List<ModelInfo>> fetchRouterModels({
+    required String baseUrl,
+    required String apiKey,
+  }) async {
+    var clean = cleanUrl(baseUrl);
+    if (clean.isEmpty) {
+      clean = 'https://openrouter.ai/api/v1';
+    }
+    final uri = Uri.parse('$clean/models');
+    final headers = <String, String>{
+      'Accept': 'application/json',
+      'HTTP-Referer': 'https://workfromphone.app',
+      'X-Title': 'WorkFromPhone',
+    };
+    final key = apiKey.trim();
+    if (key.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $key';
+    }
+    final resp = await http
+        .get(uri, headers: headers)
+        .timeout(const Duration(seconds: 15));
+    if (resp.statusCode != 200) {
+      throw Exception('Failed to fetch models: HTTP ${resp.statusCode}');
+    }
+    final decoded = jsonDecode(resp.body);
+    final rawList = decoded is Map<String, dynamic>
+        ? (decoded['data'] as List<dynamic>? ??
+              decoded['models'] as List<dynamic>? ??
+              [])
+        : <dynamic>[];
+    return rawList
+        .whereType<Map<String, dynamic>>()
+        .map(ModelInfo.fromJson)
+        .where((model) => model.id.isNotEmpty)
         .toList();
   }
 
@@ -722,6 +782,21 @@ class ApiService {
   /// act on the same backend origin as every other request, so the
   /// bearer token is forwarded through `WebViewController.loadRequest`
   /// headers.
+  static bool isPreviewNavigationAllowed({
+    required String backendUrl,
+    required String entryId,
+    required String url,
+  }) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.host.isEmpty) return false;
+    if (uri.scheme != 'http' && uri.scheme != 'https') return false;
+    if (_originOf(uri) != _originOf(Uri.parse(cleanUrl(backendUrl)))) {
+      return false;
+    }
+    final prefix = '/api/v1/preview/proxy/$entryId';
+    return uri.path == prefix || uri.path.startsWith('$prefix/');
+  }
+
   static Uri previewUri(
     String backendUrl, {
     required String entryId,

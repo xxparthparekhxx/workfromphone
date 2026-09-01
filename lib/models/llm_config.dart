@@ -39,6 +39,8 @@ class LLMConfig {
       'api_key': apiKey,
       'model': model,
       'temperature': temperature,
+      'backend_url': backendUrl,
+      'backend_access_token': backendAccessToken,
     };
   }
 

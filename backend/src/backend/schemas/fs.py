@@ -44,7 +44,7 @@ class QuickPathsResponse(BaseModel):
 class WriteFileRequest(BaseModel):
     project_path: str
     relative_path: str
-    content: str
+    content: str = Field(..., max_length=8 * 1024 * 1024)
 
 
 class CreateItemRequest(BaseModel):

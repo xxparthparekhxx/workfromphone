@@ -8,6 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
 from backend.core.config import settings
+from backend.core.security import INTERNAL_ERROR_DETAIL
 from backend.schemas.fs import (
     BrowseResponse,
     CreateItemRequest,
@@ -105,8 +106,8 @@ async def read_file(
         raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid path traversal outside project root")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
 
 
 @router.post("/file", response_model=FileActionResponse, summary="Save/Write File Content")
@@ -131,8 +132,8 @@ async def write_file(req: WriteFileRequest) -> FileActionResponse:
         raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid path traversal outside project root")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
 
 
 @router.post(
@@ -259,8 +260,8 @@ async def create_item(req: CreateItemRequest) -> FileActionResponse:
         raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid path traversal outside project root")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
 
 
 @router.delete("/file", response_model=FileActionResponse, summary="Delete File or Folder")
@@ -291,5 +292,5 @@ async def delete_item(req: DeleteItemRequest) -> FileActionResponse:
         raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid path traversal outside project root")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)

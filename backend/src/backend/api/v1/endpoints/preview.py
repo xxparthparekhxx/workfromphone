@@ -5,6 +5,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import Response
 
+from backend.core.security import is_allowed_preview_port, should_forward_proxy_header
 from backend.schemas.preview import (
     PreviewListResponse,
     PreviewRegisterRequest,
@@ -25,6 +26,8 @@ async def list_previews(project_path: str) -> PreviewListResponse:
 
 @router.post("/register", response_model=None)
 async def register_preview(req: PreviewRegisterRequest):
+    if not is_allowed_preview_port(req.port):
+        raise HTTPException(status_code=400, detail="Preview port is not allowed")
     entry = await preview_registry.register(
         project_path=req.project_path,
         port=req.port,
@@ -151,6 +154,7 @@ async def _issue(
         key: value
         for key, value in request.headers.items()
         if key.lower() not in _HOP_BY_HOP_HEADERS
+        and should_forward_proxy_header(key)
     }
     upstream_url = f"http://127.0.0.1:{port}{upstream_path}"
     try:

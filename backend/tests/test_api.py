@@ -10,8 +10,19 @@ from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from backend.core.config import settings
+from backend.core.security import (
+    assert_safe_outbound_url,
+    is_public_path,
+    sanitized_child_env,
+)
 from backend.main import app
-from backend.schemas.llm import ChatMessage, ChatTaskRequest, FetchModelsRequest, LLMConfig
+from backend.schemas.llm import (
+    ChatMessage,
+    ChatTaskRequest,
+    FetchModelsRequest,
+    GeneralChatRequest,
+    LLMConfig,
+)
 from backend.services.git_service import git_service
 from backend.services.harness_service import harness_service
 from backend.services.terminal_service import terminal_service
@@ -325,6 +336,143 @@ def test_fetch_models_handles_429_with_retry(monkeypatch: pytest.MonkeyPatch):
     assert attempts == 2
     assert resp.count == 1
     assert resp.models[0].id == "custom/model"
+
+
+def test_fetch_models_does_not_return_curated_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class FakeResponse:
+        status_code = 401
+        text = '{"error":{"message":"Unauthorized"}}'
+        headers = {}
+
+        def json(self):
+            return {"error": {"message": "Unauthorized"}}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(harness_service_module.httpx, "AsyncClient", FakeClient)
+    req = FetchModelsRequest(base_url="https://openrouter.ai/api/v1", api_key="sk-bad")
+    with pytest.raises(ValueError, match="Unauthorized"):
+        asyncio.run(harness_service.fetch_models(req))
+
+
+def test_fetch_models_skips_malformed_entries(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class FakeResponse:
+        status_code = 200
+        headers = {}
+
+        def json(self):
+            return {
+                "data": [
+                    "not-a-dict",
+                    {"id": "openai/gpt-4o", "name": "GPT-4o", "context_length": 128000.0},
+                    {"name": "missing id"},
+                    {"id": "anthropic/claude-sonnet-4", "pricing": "invalid"},
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(harness_service_module.httpx, "AsyncClient", FakeClient)
+    req = FetchModelsRequest(base_url="https://openrouter.ai/api/v1", api_key="sk-test")
+    resp = asyncio.run(harness_service.fetch_models(req))
+    assert [model.id for model in resp.models] == [
+        "openai/gpt-4o",
+        "anthropic/claude-sonnet-4",
+    ]
+
+
+def test_general_chat_stream_sends_openrouter_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        async def aiter_lines(self):
+            yield 'data: {"choices":[{"delta":{"content":"Hi there"}}]}'
+            yield (
+                'data: {"choices":[{"delta":{"content":""}}],'
+                '"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}'
+            )
+            yield "data: [DONE]"
+
+    class FakeStream:
+        async def __aenter__(self):
+            return FakeResponse()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def stream(self, method, url, headers=None, json=None):
+            captured["method"] = method
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            return FakeStream()
+
+    monkeypatch.setattr(harness_service_module.httpx, "AsyncClient", FakeClient)
+    request = GeneralChatRequest(
+        messages=[ChatMessage(role="user", content="Hello")],
+        llm_config=LLMConfig(
+            api_key="  sk-or-test-key  ",
+            model="openai/gpt-4o",
+            base_url="https://openrouter.ai/api/v1",
+        ),
+        enable_web_search=True,
+    )
+
+    async def collect_events():
+        events = []
+        async for event in harness_service.run_general_chat_stream(request):
+            events.append(json.loads(event.removeprefix("data: ").strip()))
+        return events
+
+    events = asyncio.run(collect_events())
+    assert captured["method"] == "POST"
+    assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer sk-or-test-key"
+    assert captured["json"]["model"] == "openai/gpt-4o"
+    assert "plugins" not in captured["json"]
+    assert {"role": "user", "content": "Hello"} in captured["json"]["messages"]
+    assert any(event.get("type") == "chunk" and event.get("content") == "Hi there" for event in events)
+    assert events[-1]["type"] == "done"
 
 
 def test_chat_stream_continuous_loop_with_tools_and_text(
@@ -1313,3 +1461,215 @@ def test_preview_register_tool_rejects_bad_port(tmp_path: Path, reset_preview_re
         "/api/v1/preview",
         params={"project_path": str(project)},
     ).json()["entries"] == []
+
+
+def test_robots_txt_anti_crawling():
+    resp = client.get("/robots.txt")
+    assert resp.status_code == 200
+    assert "Disallow: /" in resp.text
+    assert "noindex" in resp.headers.get("X-Robots-Tag", "")
+
+
+def _install_artifact_service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("WFP_STORAGE_DIR", str(tmp_path / "artifacts"))
+    from backend.api.v1.endpoints import artifacts as artifacts_ep
+    from backend.services.artifact_service import ArtifactService
+    import backend.services.artifact_service as art_module
+
+    service = ArtifactService()
+    art_module.artifact_service = service
+    artifacts_ep.artifact_service = service
+    main_module.artifact_service = service
+    return service
+
+
+def test_publish_and_view_artifact(tmp_path: Path, monkeypatch):
+    _install_artifact_service(tmp_path, monkeypatch)
+
+    payload = {
+        "title": "Interactive React Demo",
+        "content": "<h1>Hello Artifact</h1><script>console.log('test');</script>",
+        "content_type": "text/html",
+        "is_sandboxed": True,
+    }
+
+    pub_resp = client.post("/api/v1/artifacts/publish", json=payload)
+    assert pub_resp.status_code == 200
+    data = pub_resp.json()
+    token = data["token"]
+    assert token
+    assert "/share/" in data["share_url"]
+
+    # View shared artifact via public route
+    view_resp = client.get(f"/share/{token}")
+    assert view_resp.status_code == 200
+    assert "<h1>Hello Artifact</h1>" in view_resp.text
+    assert "noindex" in view_resp.headers.get("X-Robots-Tag", "")
+    assert "sandbox allow-scripts" in view_resp.headers.get("Content-Security-Policy", "")
+    assert "unsafe-eval" not in view_resp.headers.get("Content-Security-Policy", "")
+
+
+def test_pin_protected_artifact(tmp_path: Path, monkeypatch):
+    _install_artifact_service(tmp_path, monkeypatch)
+
+    payload = {
+        "title": "Secret Dashboard",
+        "content": "<p>Secret Content</p>",
+        "content_type": "text/html",
+        "is_sandboxed": True,
+        "pin_code": "9876",
+    }
+
+    pub_resp = client.post("/api/v1/artifacts/publish", json=payload)
+    assert pub_resp.status_code == 200
+    token = pub_resp.json()["token"]
+
+    # View without PIN shows unlock form
+    view_resp = client.get(f"/share/{token}")
+    assert view_resp.status_code == 200
+    assert "Protected Artifact" in view_resp.text
+    assert "Secret Content" not in view_resp.text
+
+    # Query-string PINs must not unlock the artifact.
+    leaked = client.get(f"/share/{token}?pin=9876")
+    assert leaked.status_code == 200
+    assert "Secret Content" not in leaked.text
+
+    unlocked_resp = client.post(f"/share/{token}", data={"pin": "9876"})
+    assert unlocked_resp.status_code == 200
+    assert "<p>Secret Content</p>" in unlocked_resp.text
+
+
+def test_web_search_endpoint():
+    resp = client.post("/api/v1/search", json={"query": "fastapi python", "limit": 3})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "query" in data
+    assert "results" in data
+    assert isinstance(data["results"], list)
+
+
+def test_docs_require_auth_when_access_token_is_set():
+    previous_token = settings.ACCESS_TOKEN
+    settings.ACCESS_TOKEN = "test-access-token"
+    try:
+        assert client.get("/docs").status_code == 401
+        assert client.get("/openapi.json").status_code == 401
+        assert client.get("/redoc").status_code == 401
+        assert client.get("/api/v1/health").status_code == 200
+    finally:
+        settings.ACCESS_TOKEN = previous_token
+
+
+def test_share_prefix_is_not_an_auth_bypass():
+    assert is_public_path("/share/abc") is True
+    assert is_public_path("/share/../api/v1/system/snapshot") is False
+    assert is_public_path("/share/foo/extra") is False
+
+    previous_token = settings.ACCESS_TOKEN
+    settings.ACCESS_TOKEN = "test-access-token"
+    try:
+        assert client.get("/share/../api/v1/system/snapshot").status_code == 401
+    finally:
+        settings.ACCESS_TOKEN = previous_token
+
+
+def test_websocket_rejects_foreign_browser_origin():
+    with pytest.raises(WebSocketDisconnect) as denied:
+        with client.websocket_connect(
+            "/api/v1/system/ws",
+            headers={"Origin": "https://evil.example"},
+        ) as websocket:
+            websocket.receive_json()
+    assert denied.value.code == 4403
+
+
+def test_sanitized_child_env_drops_access_token(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ACCESS_TOKEN", "super-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    env = sanitized_child_env({"TERM": "xterm-256color"})
+    assert "ACCESS_TOKEN" not in env
+    assert "OPENAI_API_KEY" not in env
+    assert env["TERM"] == "xterm-256color"
+
+
+def test_outbound_url_blocks_cloud_metadata():
+    with pytest.raises(ValueError, match="link-local|metadata|not allowed"):
+        assert_safe_outbound_url("http://169.254.169.254/latest/meta-data")
+    with pytest.raises(ValueError, match="not allowed"):
+        assert_safe_outbound_url("http://metadata.google.internal/")
+    with pytest.raises(ValueError, match="http or https"):
+        assert_safe_outbound_url("file:///etc/passwd")
+    assert_safe_outbound_url("http://127.0.0.1:11434/v1")
+
+
+def test_preview_register_rejects_privileged_ports(reset_preview_registry):
+    resp = client.post(
+        "/api/v1/preview/register",
+        json={
+            "project_path": "/tmp",
+            "port": 22,
+            "label": "ssh",
+        },
+    )
+    assert resp.status_code == 400
+
+
+def test_preview_proxy_strips_authorization(
+    tmp_path: Path, reset_preview_registry
+):
+    captured: dict[str, str] = {}
+
+    import http.server
+    import socketserver
+    import threading
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            captured["authorization"] = self.headers.get("Authorization", "")
+            body = b"ok"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args) -> None:  # noqa: A002
+            return
+
+    server = socketserver.TCPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        registered = client.post(
+            "/api/v1/preview/register",
+            json={
+                "project_path": str(tmp_path),
+                "port": port,
+                "label": "echo",
+            },
+        )
+        entry_id = registered.json()["entry"]["id"]
+        proxied = client.get(
+            f"/api/v1/preview/proxy/{entry_id}/",
+            headers={"Authorization": "Bearer leaked-token"},
+        )
+        assert proxied.status_code == 200
+        assert captured["authorization"] == ""
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_git_diff_does_not_follow_symlink_outside_project(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("top-secret-value\n", encoding="utf-8")
+    (repo / "leaked").symlink_to(secret)
+
+    diff = asyncio.run(git_service.get_diff(str(repo), "leaked"))
+    assert "top-secret-value" not in diff.diff
+

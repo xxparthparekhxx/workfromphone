@@ -32,8 +32,19 @@ class ChatTaskRequest(BaseModel):
     messages: List[ChatMessage] = Field(description="Conversation message history")
     llm_config: LLMConfig = Field(description="LLM provider and model configuration")
     max_steps: Optional[int] = Field(
-        default=None,
-        description="Optional max agentic tool-calling turns. When None, runs without step limit until task completion.",
+        default=50,
+        ge=1,
+        le=200,
+        description="Max agentic tool-calling turns. Defaults to 50.",
+    )
+
+
+class GeneralChatRequest(BaseModel):
+    messages: List[ChatMessage] = Field(description="Conversation message history")
+    llm_config: LLMConfig = Field(description="LLM provider and model configuration")
+    enable_web_search: bool = Field(
+        default=False,
+        description="Enable OpenRouter web search plugin when supported",
     )
 
 

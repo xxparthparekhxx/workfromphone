@@ -8,6 +8,11 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
 
+from backend.core.security import (
+    assert_safe_outbound_url,
+    is_allowed_preview_port,
+    sanitized_child_env,
+)
 from backend.services.preview_service import preview_registry
 from backend.services.terminal_service import terminate_process_group
 from backend.schemas.llm import (
@@ -15,6 +20,7 @@ from backend.schemas.llm import (
     ChatTaskRequest,
     FetchModelsRequest,
     FetchModelsResponse,
+    GeneralChatRequest,
     LLMConfig,
     ModelInfo,
 )
@@ -362,6 +368,39 @@ class HarnessService:
         return delay
 
     @staticmethod
+    def _sse(payload: Dict[str, Any]) -> str:
+        return f"data: {json.dumps(payload)}\n\n"
+
+    @staticmethod
+    def _router_headers(api_key: str) -> Dict[str, str]:
+        headers = {
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://workfromphone.local",
+            "X-Title": "WorkFromPhone",
+        }
+        key = (api_key or "").strip()
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+        return headers
+
+    @staticmethod
+    def _provider_error_message(status_code: int, body: str) -> str:
+        err_msg = f"HTTP {status_code}"
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, dict) and "error" in parsed:
+                err = parsed["error"]
+                if isinstance(err, dict) and err.get("message"):
+                    err_msg = str(err["message"])
+                else:
+                    err_msg = str(err)
+        except Exception:
+            trimmed = body.strip()
+            if trimmed:
+                err_msg = trimmed[:500]
+        return err_msg
+
+    @staticmethod
     def _sanitize_path(project_root: Path, relative_path_str: str) -> Path:
         resolved = (project_root / relative_path_str.strip()).resolve()
         # Ensure path stays within or is root
@@ -385,6 +424,7 @@ class HarnessService:
                     cwd=str(project_root),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    env=sanitized_child_env(),
                     start_new_session=True,
                 )
                 try:
@@ -518,8 +558,8 @@ class HarnessService:
             elif tool_name == "register_preview":
                 port = args.get("port")
                 label = args.get("label")
-                if not isinstance(port, int) or not (1 <= port <= 65535):
-                    return "Error: 'port' must be an integer between 1 and 65535."
+                if not isinstance(port, int) or not is_allowed_preview_port(port):
+                    return "Error: 'port' is not an allowed preview port."
                 if not isinstance(label, str) or not label.strip():
                     return "Error: 'label' is required and must be non-empty."
                 base_path = args.get("base_path") or ""
@@ -571,17 +611,65 @@ class HarnessService:
             return f"Error executing tool '{tool_name}': {str(e)}"
 
     @classmethod
+    def _parse_provider_models(cls, data: Any) -> List[ModelInfo]:
+        if isinstance(data, dict):
+            raw_models = data.get("data") or data.get("models") or []
+        elif isinstance(data, list):
+            raw_models = data
+        else:
+            raw_models = []
+
+        models: List[ModelInfo] = []
+        for m in raw_models:
+            if not isinstance(m, dict):
+                continue
+            m_id = str(m.get("id") or "").strip()
+            if not m_id:
+                continue
+            m_name = str(m.get("name") or m_id)
+            description = m.get("description")
+            if description is not None:
+                description = str(description)
+            context_length = m.get("context_length") or m.get("context_window")
+            parsed_context: Optional[int] = None
+            if isinstance(context_length, bool):
+                parsed_context = None
+            elif isinstance(context_length, int):
+                parsed_context = context_length
+            elif isinstance(context_length, float):
+                parsed_context = int(context_length)
+            elif isinstance(context_length, str) and context_length.isdigit():
+                parsed_context = int(context_length)
+            pricing = m.get("pricing")
+            if not isinstance(pricing, dict):
+                pricing = None
+            try:
+                models.append(
+                    ModelInfo(
+                        id=m_id,
+                        name=m_name,
+                        description=description,
+                        context_length=parsed_context,
+                        pricing=pricing,
+                    )
+                )
+            except Exception:
+                continue
+        return models
+
+    @classmethod
     async def fetch_models(cls, req: FetchModelsRequest) -> FetchModelsResponse:
-        base_url = req.base_url.rstrip("/")
+        base_url = (req.base_url or "https://openrouter.ai/api/v1").rstrip("/")
+        if not base_url:
+            base_url = "https://openrouter.ai/api/v1"
         url = f"{base_url}/models"
+        try:
+            assert_safe_outbound_url(url)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
-        headers = {
-            "HTTP-Referer": "https://workfromphone.local",
-            "X-Title": "WorkFromPhone",
-        }
-        if req.api_key:
-            headers["Authorization"] = f"Bearer {req.api_key.strip()}"
-
+        headers = cls._router_headers(req.api_key)
+        last_error = "Failed to fetch models from provider"
         try:
             for attempt in range(cls.MAX_RETRIES + 1):
                 async with httpx.AsyncClient(timeout=15.0) as client:
@@ -592,84 +680,28 @@ class HarnessService:
                         await asyncio.sleep(delay)
                         continue
                     if resp.status_code != 200:
-                        # Fallback to curated popular models list if /models is restricted or failed
-                        return cls._get_default_models(f"Provider returned HTTP {resp.status_code}")
+                        last_error = cls._provider_error_message(
+                            resp.status_code,
+                            resp.text,
+                        )
+                        raise ValueError(f"Provider returned {last_error}")
 
-                    data = resp.json()
-                    raw_models = data.get("data", []) if isinstance(data, dict) else []
+                    try:
+                        data = resp.json()
+                    except Exception as exc:
+                        raise ValueError("Provider returned invalid JSON") from exc
 
-                    models: List[ModelInfo] = []
-                    for m in raw_models:
-                        m_id = m.get("id", "")
-                        m_name = m.get("name", m_id)
-                        description = m.get("description")
-                        context_length = m.get("context_length")
-                        pricing = m.get("pricing")
-                        if m_id:
-                            models.append(
-                                ModelInfo(
-                                    id=m_id,
-                                    name=m_name,
-                                    description=description,
-                                    context_length=context_length,
-                                    pricing=pricing,
-                                )
-                            )
-
+                    models = cls._parse_provider_models(data)
                     if not models:
-                        return cls._get_default_models("Empty model list returned")
+                        raise ValueError("Provider returned an empty model list")
 
                     return FetchModelsResponse(models=models, count=len(models))
+        except ValueError:
+            raise
         except Exception as e:
-            return cls._get_default_models(str(e))
+            raise ValueError(f"Failed to fetch models from provider: {e}") from e
 
-    @staticmethod
-    def _get_default_models(note: str = "") -> FetchModelsResponse:
-        curated = [
-            ModelInfo(
-                id="anthropic/claude-3.5-sonnet",
-                name="Claude 3.5 Sonnet (Anthropic)",
-                description="Industry leading model for coding, refactoring, and agentic tool use.",
-                context_length=200000,
-            ),
-            ModelInfo(
-                id="openai/gpt-4o",
-                name="GPT-4o (OpenAI)",
-                description="Flagship multimodal omni model with strong reasoning & tool calling.",
-                context_length=128000,
-            ),
-            ModelInfo(
-                id="openai/gpt-4o-mini",
-                name="GPT-4o Mini (OpenAI)",
-                description="Fast and cost-efficient intelligent model for general coding tasks.",
-                context_length=128000,
-            ),
-            ModelInfo(
-                id="deepseek/deepseek-chat",
-                name="DeepSeek V3 (DeepSeek)",
-                description="High-performance open-weight architecture model for coding and reasoning.",
-                context_length=64000,
-            ),
-            ModelInfo(
-                id="deepseek/deepseek-r1",
-                name="DeepSeek R1 (DeepSeek)",
-                description="Advanced reasoning and reflection model for complex programming problems.",
-                context_length=64000,
-            ),
-            ModelInfo(
-                id="meta-llama/llama-3.3-70b-instruct",
-                name="Llama 3.3 70B Instruct (Meta)",
-                description="High-capacity open model matching top tier benchmarks.",
-                context_length=131072,
-            ),
-            ModelInfo(
-                id="google/gemini-2.0-flash-001",
-                name="Gemini 2.0 Flash (Google)",
-                description="Ultra-fast, next-gen coding & multimodal agentic model.",
-                context_length=1000000,
-            ),
-        ]
-        return FetchModelsResponse(models=curated, count=len(curated))
+        raise ValueError(last_error)
 
     @classmethod
     async def run_agentic_task_stream(
@@ -687,6 +719,11 @@ class HarnessService:
 
         base_url = req.llm_config.base_url.rstrip("/")
         completions_url = f"{base_url}/chat/completions"
+        try:
+            assert_safe_outbound_url(completions_url)
+        except ValueError as exc:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+            return
 
         headers = {
             "Content-Type": "application/json",
@@ -726,7 +763,7 @@ class HarnessService:
 
         step = 0
         consecutive_text_turns = 0
-        max_steps = req.max_steps
+        max_steps = req.max_steps if req.max_steps is not None else 50
         accumulated_usage = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -978,6 +1015,240 @@ class HarnessService:
                     return
 
             yield f"data: {json.dumps({'type': 'done', 'total_steps': step, 'message': 'Reached max steps limit.'})}\n\n"
+
+    @classmethod
+    async def run_general_chat_stream(
+        cls,
+        req: GeneralChatRequest,
+    ) -> AsyncGenerator[str, None]:
+        """Stream a non-agentic chat completion to OpenRouter or compatible APIs."""
+        base_url = (req.llm_config.base_url or "https://openrouter.ai/api/v1").rstrip("/")
+        if not base_url:
+            base_url = "https://openrouter.ai/api/v1"
+        completions_url = f"{base_url}/chat/completions"
+        try:
+            assert_safe_outbound_url(completions_url)
+        except ValueError as exc:
+            yield cls._sse({"type": "error", "message": str(exc)})
+            return
+
+        headers = cls._router_headers(req.llm_config.api_key)
+        messages: List[Dict[str, Any]] = []
+        for m in req.messages:
+            msg_dict: Dict[str, Any] = {"role": m.role}
+            if m.content is not None:
+                msg_dict["content"] = m.content
+            messages.append(msg_dict)
+
+        if not messages:
+            yield cls._sse({"type": "error", "message": "No messages provided"})
+            return
+
+        payload: Dict[str, Any] = {
+            "model": req.llm_config.model,
+            "messages": messages,
+            "temperature": req.llm_config.temperature,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if req.llm_config.max_tokens is not None:
+            payload["max_tokens"] = req.llm_config.max_tokens
+        if req.enable_web_search:
+            # Extract last user query to search via SearXNG
+            user_queries = [
+                m["content"]
+                for m in messages
+                if m.get("role") == "user" and isinstance(m.get("content"), str)
+            ]
+            last_query = user_queries[-1] if user_queries else ""
+            if last_query:
+                yield cls._sse(
+                    {"type": "status", "content": "Searching web via SearXNG..."}
+                )
+                try:
+                    from backend.schemas.search import SearchRequest
+                    from backend.services.search_service import search_service
+
+                    search_res = await search_service.search(
+                        SearchRequest(query=last_query, limit=5)
+                    )
+                    if search_res.results:
+                        context_lines = [
+                            f"[Live Web Search Results via SearXNG for query: '{last_query}']:"
+                        ]
+                        for idx, item in enumerate(search_res.results, start=1):
+                            context_lines.append(
+                                f"{idx}. {item.title}\n   URL: {item.url}\n   Snippet: {item.snippet}"
+                            )
+                        context_block = "\n".join(context_lines)
+                        messages.insert(
+                            0,
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You are a helpful assistant. Use the following real-time SearXNG web "
+                                    f"search results to formulate your response:\n\n{context_block}"
+                                ),
+                            },
+                        )
+                except Exception as err:
+                    yield cls._sse(
+                        {"type": "status", "content": f"SearXNG search notice: {err}"}
+                    )
+
+        status = f"Generating response with {req.llm_config.model}..."
+        yield cls._sse({"type": "status", "content": status})
+
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            for attempt in range(cls.MAX_RETRIES + 1):
+                stream_started = False
+                should_retry = False
+                try:
+                    async with client.stream(
+                        "POST", completions_url, headers=headers, json=payload
+                    ) as response:
+                        if response.status_code == 429:
+                            err_body = await response.aread()
+                            err_msg = err_body.decode("utf-8", errors="replace")
+                            if attempt < cls.MAX_RETRIES:
+                                retry_after = cls._parse_retry_after(
+                                    response.headers.get("retry-after")
+                                )
+                                delay = cls._calculate_backoff(attempt, retry_after)
+                                yield cls._sse(
+                                    {
+                                        "type": "status",
+                                        "content": (
+                                            f"Rate limited (429). Retrying in {delay:.1f}s "
+                                            f"(attempt {attempt + 1}/{cls.MAX_RETRIES})..."
+                                        ),
+                                    }
+                                )
+                                await asyncio.sleep(delay)
+                                continue
+                            yield cls._sse(
+                                {
+                                    "type": "error",
+                                    "message": (
+                                        f"API error (429): Rate limit exceeded after "
+                                        f"{cls.MAX_RETRIES} retries: {err_msg}"
+                                    ),
+                                }
+                            )
+                            return
+
+                        if response.status_code != 200:
+                            err_body = await response.aread()
+                            err_msg = cls._provider_error_message(
+                                response.status_code,
+                                err_body.decode("utf-8", errors="replace"),
+                            )
+                            yield cls._sse(
+                                {
+                                    "type": "error",
+                                    "message": f"API error ({err_msg})",
+                                }
+                            )
+                            return
+
+                        async for line in response.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            line_data = line[5:].strip()
+                            if line_data == "[DONE]":
+                                break
+                            try:
+                                chunk_json = json.loads(line_data)
+                            except json.JSONDecodeError:
+                                continue
+
+                            if "error" in chunk_json:
+                                err_obj = chunk_json["error"]
+                                err_msg = (
+                                    err_obj.get("message", str(err_obj))
+                                    if isinstance(err_obj, dict)
+                                    else str(err_obj)
+                                )
+                                if (
+                                    not stream_started
+                                    and attempt < cls.MAX_RETRIES
+                                    and (
+                                        "rate" in err_msg.lower()
+                                        or "429" in str(err_obj)
+                                    )
+                                ):
+                                    delay = cls._calculate_backoff(attempt)
+                                    yield cls._sse(
+                                        {
+                                            "type": "status",
+                                            "content": (
+                                                f"Rate limited. Retrying in {delay:.1f}s "
+                                                f"(attempt {attempt + 1}/{cls.MAX_RETRIES})..."
+                                            ),
+                                        }
+                                    )
+                                    await asyncio.sleep(delay)
+                                    should_retry = True
+                                    break
+                                yield cls._sse(
+                                    {
+                                        "type": "error",
+                                        "message": f"API stream error: {err_msg}",
+                                    }
+                                )
+                                return
+
+                            if isinstance(chunk_json.get("usage"), dict):
+                                usage = chunk_json["usage"]
+                                yield cls._sse({"type": "usage", "usage": usage})
+
+                            choices = chunk_json.get("choices") or []
+                            if not choices:
+                                continue
+                            delta = choices[0].get("delta") or {}
+                            content_piece = delta.get("content")
+                            if content_piece:
+                                stream_started = True
+                                yield cls._sse(
+                                    {"type": "chunk", "content": content_piece}
+                                )
+
+                    if should_retry:
+                        continue
+
+                    yield cls._sse({"type": "done"})
+                    return
+                except httpx.RequestError as exc:
+                    if not stream_started and attempt < cls.MAX_RETRIES:
+                        delay = cls._calculate_backoff(attempt)
+                        yield cls._sse(
+                            {
+                                "type": "status",
+                                "content": (
+                                    f"Network error ({exc}). Retrying in {delay:.1f}s "
+                                    f"(attempt {attempt + 1}/{cls.MAX_RETRIES})..."
+                                ),
+                            }
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    yield cls._sse(
+                        {
+                            "type": "error",
+                            "message": f"Connection failed: {exc}",
+                        }
+                    )
+                    return
+                except Exception as exc:
+                    yield cls._sse(
+                        {
+                            "type": "error",
+                            "message": f"Chat execution error: {exc}",
+                        }
+                    )
+                    return
+
+        yield cls._sse({"type": "error", "message": "Chat failed after retries"})
 
 
 harness_service = HarnessService()

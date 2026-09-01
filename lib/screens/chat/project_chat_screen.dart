@@ -55,7 +55,6 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
   bool _projectFilesTruncated = false;
   String? _projectFilesError;
   bool _isRunning = false;
-  String? _currentStatus;
 
   // Multi-conversation state
   ConversationSession? _currentSession;
@@ -225,7 +224,6 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
         _messages.clear();
         _stats = const TaskStats();
         _isRunning = false;
-        _currentStatus = null;
       });
     }
   }
@@ -247,7 +245,6 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
         _messages.addAll(session.messages);
         _stats = session.stats;
         _isRunning = false;
-        _currentStatus = null;
       });
       _scrollToBottom(force: true, animated: false);
     }
@@ -263,19 +260,102 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
     );
   }
 
-  Future<void> _fetchModelsList() async {
+  Future<void> _deleteMessage(ChatMessage msg) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Message'),
+        content: const Text('Are you sure you want to delete this message?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.tonal(
+            style: FilledButton.styleFrom(
+              foregroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      setState(() {
+        _messages.removeWhere((m) => m.id == msg.id);
+      });
+      await _saveCurrentSession();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Message deleted'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _clearChat() async {
+    if (_messages.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear Conversation'),
+        content: const Text(
+          'Are you sure you want to clear all messages in this conversation?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+              foregroundColor: Theme.of(ctx).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Clear All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      setState(() {
+        _messages.clear();
+      });
+      await _saveCurrentSession();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Conversation cleared'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<List<ModelInfo>> _fetchModelsList() async {
     try {
-      final list = await ApiService.fetchModels(
-        _llmConfig.backendUrl,
-        _llmConfig.baseUrl,
-        _llmConfig.apiKey,
+      final list = await ApiService.fetchProviderModels(
+        backendUrl: _llmConfig.backendUrl,
+        baseUrl: _llmConfig.baseUrl,
+        apiKey: _llmConfig.apiKey,
       );
       if (mounted) {
         setState(() {
           _availableModels = list;
         });
       }
-    } catch (_) {}
+      return list;
+    } catch (_) {
+      return _availableModels;
+    }
   }
 
   void _handleComposerChanged() {
@@ -459,7 +539,6 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
       _messages.add(userMsg);
       _messages.add(assistantMsg);
       _isRunning = true;
-      _currentStatus = 'Connecting to model...';
       _stats = _stats.copyWith(
         promptTokens: basePromptTokens + estimatedPromptTokens,
         completionTokens: baseCompletionTokens,
@@ -486,7 +565,6 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
       onStatus: (status) {
         if (mounted) {
           setState(() {
-            _currentStatus = status;
             assistantMsg.statusMessage = status;
           });
           _scrollToBottom(force: false, animated: false);
@@ -527,7 +605,6 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
             assistantMsg.addToolEvent(
               ToolEvent(toolName: toolName, args: args, isExecuting: true),
             );
-            _currentStatus = 'Executing $toolName...';
             _stats = _stats.copyWith(
               toolCallsCount: baseToolCalls + _toolCallsCount,
             );
@@ -545,7 +622,6 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
             lastTool.output = output;
             lastTool.isExecuting = false;
             lastTool.isError = output.startsWith('Error:');
-            _currentStatus = 'Tool completed';
           });
           _scrollToBottom(force: false, animated: false);
         }
@@ -593,7 +669,6 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
             _isRunning = false;
             assistantMsg.isStreaming = false;
             assistantMsg.statusMessage = null;
-            _currentStatus = null;
             _stats = _stats.copyWith(
               promptTokens: receivedExactUsage
                   ? _stats.promptTokens
@@ -626,7 +701,6 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
             assistantMsg.isError = true;
             assistantMsg.content += '\n\n⚠️ $err';
             assistantMsg.statusMessage = null;
-            _currentStatus = null;
             _stats = _stats.copyWith(isStreaming: false);
           });
           _saveCurrentSession();
@@ -644,7 +718,6 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
     _chatService.cancel();
     setState(() {
       _isRunning = false;
-      _currentStatus = null;
       _stats = _stats.copyWith(isStreaming: false);
       for (final message in _messages.reversed) {
         if (message.role == MessageRole.assistant && message.isStreaming) {
@@ -801,9 +874,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
       context: context,
       selectedModelId: _llmConfig.model,
       availableModels: _availableModels,
-      onRefresh: () async {
-        await _fetchModelsList();
-      },
+      onRefresh: _fetchModelsList,
       onModelSelected: (selectedModel) async {
         final updated = _llmConfig.copyWith(model: selectedModel.id);
         await StorageService.saveLLMConfig(updated);
@@ -1061,7 +1132,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
               ],
-              if (msg.content.isNotEmpty && !msg.isStreaming)
+              if (msg.content.isNotEmpty && !msg.isStreaming) ...[
                 InkWell(
                   borderRadius: BorderRadius.circular(6),
                   onTap: () {
@@ -1104,6 +1175,38 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
                     ),
                   ),
                 ),
+                const SizedBox(width: 6),
+                InkWell(
+                  borderRadius: BorderRadius.circular(6),
+                  onTap: () => _deleteMessage(msg),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          CupertinoIcons.trash,
+                          size: 12,
+                          color: theme.colorScheme.error.withValues(alpha: 0.8),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Delete',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: theme.colorScheme.error.withValues(
+                              alpha: 0.8,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 10),
@@ -1469,43 +1572,6 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
             ),
           ),
 
-        // Live task progress status bar
-        if (_isRunning && _currentStatus != null)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
-            child: Row(
-              children: [
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    _currentStatus!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(
-                    CupertinoIcons.multiply_circle,
-                    size: 20,
-                    color: Colors.red,
-                  ),
-                  tooltip: 'Stop Task',
-                  onPressed: _stopCurrentTask,
-                ),
-              ],
-            ),
-          ),
-
         // Chat Input Box
         SafeArea(
           child: Container(
@@ -1656,6 +1722,12 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
           ),
         ),
         actions: [
+          if (_messages.isNotEmpty)
+            IconButton(
+              icon: const Icon(CupertinoIcons.trash, size: 18),
+              tooltip: 'Clear Conversation',
+              onPressed: _clearChat,
+            ),
           IconButton(
             icon: const Icon(CupertinoIcons.bubble_left, size: 20),
             tooltip: 'All Conversations',

@@ -18,17 +18,51 @@ class MarkdownMessageView extends StatelessWidget {
   });
 
   Future<void> _handleLinkTap(BuildContext context, String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri != null && await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
+    var cleanUrl = url.trim();
+    if (cleanUrl.isEmpty) return;
+
+    // Clean trailing punctuation attached by markdown or text parsers
+    cleanUrl = cleanUrl.replaceAll(RegExp(r'[\)\]\.\,]+$'), '');
+
+    var uri = Uri.tryParse(cleanUrl);
+    if (uri == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Could not open link: $url'),
+            content: Text('Invalid URL: $url'),
             behavior: SnackBarBehavior.floating,
           ),
         );
+      }
+      return;
+    }
+
+    if (!uri.hasScheme) {
+      uri = Uri.tryParse('https://$cleanUrl');
+    }
+
+    if (uri == null) return;
+
+    try {
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched && context.mounted) {
+        await launchUrl(uri, mode: LaunchMode.platformDefault);
+      }
+    } catch (_) {
+      try {
+        await launchUrl(uri, mode: LaunchMode.platformDefault);
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Could not open link: $url'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
       }
     }
   }

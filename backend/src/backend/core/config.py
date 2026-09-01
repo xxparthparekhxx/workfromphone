@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
     ACCESS_TOKEN: str = ""
     MAX_UPLOAD_BYTES: int = 512 * 1024 * 1024
+    SEARXNG_URL: str = "http://localhost:8080"
 
     # CORS configuration - default allows local frontend/mobile dev.
     # Never add "*" here: browsers would then let any site reach this backend.

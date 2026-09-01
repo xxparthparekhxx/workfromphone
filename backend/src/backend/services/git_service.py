@@ -21,6 +21,15 @@ class GitService:
             raise ValueError(f"Project directory '{project_path_str}' does not exist.")
         return resolved
 
+    @staticmethod
+    def _assert_contained_paths(project_root: Path, paths: List[str]) -> None:
+        for relative in paths:
+            target = (project_root / relative).resolve()
+            try:
+                target.relative_to(project_root)
+            except ValueError as error:
+                raise ValueError(f"Path '{relative}' is outside the project root.") from error
+
     @classmethod
     async def _run_git_cmd(
         cls,
@@ -191,6 +200,10 @@ class GitService:
             # If unstaged diff is empty and file is untracked, show whole file as addition diff
             if not diff_out.strip() and not staged:
                 target_file = (project_root / rel_clean).resolve()
+                try:
+                    target_file.relative_to(project_root)
+                except ValueError:
+                    return GitDiffResponse(diff="", path=rel_clean, staged=staged)
                 if target_file.exists() and target_file.is_file():
                     try:
                         with open(target_file, "r", encoding="utf-8", errors="replace") as f:
@@ -217,6 +230,7 @@ class GitService:
     async def stage_files(cls, project_path_str: str, paths: Optional[List[str]] = None) -> GitActionResult:
         project_root = cls._get_project_root(project_path_str)
         if paths and len(paths) > 0:
+            cls._assert_contained_paths(project_root, paths)
             code, out, err = await cls._run_git_cmd(project_root, ["add", "--"] + paths)
         else:
             code, out, err = await cls._run_git_cmd(project_root, ["add", "-A"])
@@ -232,6 +246,7 @@ class GitService:
     async def unstage_files(cls, project_path_str: str, paths: Optional[List[str]] = None) -> GitActionResult:
         project_root = cls._get_project_root(project_path_str)
         if paths and len(paths) > 0:
+            cls._assert_contained_paths(project_root, paths)
             code, out, err = await cls._run_git_cmd(project_root, ["restore", "--staged", "--"] + paths)
             if code != 0:
                 code, out, err = await cls._run_git_cmd(project_root, ["reset", "HEAD", "--"] + paths)

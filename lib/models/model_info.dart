@@ -83,8 +83,10 @@ class ModelInfo {
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? json['id'] as String? ?? '',
       description: json['description'] as String?,
-      contextLength: json['context_length'] as int?,
-      pricing: json['pricing'] as Map<String, dynamic>?,
+      contextLength: (json['context_length'] as num?)?.toInt(),
+      pricing: json['pricing'] is Map<String, dynamic>
+          ? json['pricing'] as Map<String, dynamic>
+          : null,
     );
   }
 

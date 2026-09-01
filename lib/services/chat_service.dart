@@ -46,13 +46,9 @@ class ChatService {
 
     try {
       final request = http.Request('POST', uri)
-        ..headers['Content-Type'] = 'application/json'
+        ..headers.addAll(ApiService.headers(json: true, uri: uri))
         ..headers['Accept'] = 'text/event-stream'
         ..body = jsonEncode(payload);
-      if (llmConfig.backendAccessToken.isNotEmpty) {
-        request.headers['Authorization'] =
-            'Bearer ${llmConfig.backendAccessToken}';
-      }
 
       final response = await _client!.send(request);
 

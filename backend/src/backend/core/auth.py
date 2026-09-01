@@ -4,16 +4,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from backend.core.config import settings
-
-
-_PUBLIC_PATHS = {
-    "/",
-    "/docs",
-    "/docs/oauth2-redirect",
-    "/openapi.json",
-    "/redoc",
-    f"{settings.API_V1_PREFIX}/health",
-}
+from backend.core.security import is_allowed_websocket_origin, is_public_path
 
 
 class BearerTokenMiddleware:
@@ -23,12 +14,7 @@ class BearerTokenMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        access_token = settings.ACCESS_TOKEN
-        if (
-            not access_token
-            or scope["type"] not in {"http", "websocket"}
-            or scope.get("path") in _PUBLIC_PATHS
-        ):
+        if scope["type"] not in {"http", "websocket"}:
             await self.app(scope, receive, send)
             return
 
@@ -36,6 +22,24 @@ class BearerTokenMiddleware:
             key.decode("latin-1").lower(): value.decode("latin-1")
             for key, value in scope.get("headers", [])
         }
+
+        if scope["type"] == "websocket" and not is_allowed_websocket_origin(
+            headers.get("origin", "")
+        ):
+            message: Message = {
+                "type": "websocket.close",
+                "code": 4403,
+                "reason": "Origin not allowed",
+            }
+            await send(message)
+            return
+
+        access_token = settings.ACCESS_TOKEN
+        path = scope.get("path", "")
+        if not access_token or is_public_path(path):
+            await self.app(scope, receive, send)
+            return
+
         authorization = headers.get("authorization", "")
         scheme, _, supplied_token = authorization.partition(" ")
         authorized = (
@@ -48,7 +52,7 @@ class BearerTokenMiddleware:
             return
 
         if scope["type"] == "websocket":
-            message: Message = {
+            message = {
                 "type": "websocket.close",
                 "code": 4401,
                 "reason": "Authentication required",

@@ -1,16 +1,21 @@
+import 'dart:async';
+
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:workfromphone/models/backend_profile.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:workfromphone/models/llm_config.dart';
 import 'package:workfromphone/models/model_info.dart';
 import 'package:workfromphone/screens/settings/remote_backend_setup_screen.dart';
 import 'package:workfromphone/services/api_service.dart';
 import 'package:workfromphone/services/remote_setup_service.dart';
 import 'package:workfromphone/services/storage_service.dart';
+import 'package:workfromphone/widgets/add_edit_backend_dialog.dart';
 import 'package:workfromphone/widgets/model_picker_sheet.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.isActive = true});
+
+  final bool isActive;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -18,20 +23,28 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final TextEditingController _backendUrlCtrl = TextEditingController();
+  final TextEditingController _backendAccessTokenCtrl = TextEditingController();
+  final TextEditingController _hubUrlCtrl = TextEditingController();
+  final TextEditingController _hubAccessTokenCtrl = TextEditingController();
   final TextEditingController _baseUrlCtrl = TextEditingController();
   final TextEditingController _apiKeyCtrl = TextEditingController();
   final TextEditingController _modelCtrl = TextEditingController();
 
   double _temperature = 0.2;
   bool _obscureApiKey = true;
+  bool _obscureBackendToken = true;
+  bool _obscureHubToken = true;
   bool _isTestingBackend = false;
   bool? _backendOnline;
+  bool _isTestingHub = false;
+  bool? _hubOnline;
   bool _isFetchingModels = false;
   List<ModelInfo> _modelsList = [];
-  String _backendAccessToken = '';
-  String _loadedBackendUrl = '';
   BackendProfile? _activeBackendProfile;
+  BackendProfile? _centralHubProfile;
+  List<BackendProfile> _devProfiles = [];
   bool _isReconnecting = false;
+  bool _settingsLoaded = false;
 
   final List<Map<String, String>> _providerPresets = [
     {
@@ -65,30 +78,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _backendUrlCtrl.dispose();
+    _backendAccessTokenCtrl.dispose();
+    _hubUrlCtrl.dispose();
+    _hubAccessTokenCtrl.dispose();
     _baseUrlCtrl.dispose();
     _apiKeyCtrl.dispose();
     _modelCtrl.dispose();
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(SettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isActive && !widget.isActive && _settingsLoaded) {
+      unawaited(_saveSettings(showConfirmation: false));
+    }
+  }
+
   Future<void> _loadSettings() async {
     final cfg = await StorageService.loadLLMConfig();
     final activeProfile = await StorageService.loadActiveBackendProfile();
+    final hubProfile = await StorageService.loadCentralHubProfile();
+    final allProfiles = await StorageService.loadBackendProfiles();
+
+    String hubToken = '';
+    if (hubProfile != null) {
+      hubToken =
+          await StorageService.loadBackendSecret(
+            hubProfile.id,
+            'access_token',
+          ) ??
+          '';
+    }
+
     setState(() {
       _backendUrlCtrl.text = cfg.backendUrl;
+      _backendAccessTokenCtrl.text = cfg.backendAccessToken;
+      _hubUrlCtrl.text = hubProfile?.backendUrl ?? '';
+      _hubAccessTokenCtrl.text = hubToken;
       _baseUrlCtrl.text = cfg.baseUrl;
       _apiKeyCtrl.text = cfg.apiKey;
       _modelCtrl.text = cfg.model;
       _temperature = cfg.temperature;
-      _backendAccessToken = cfg.backendAccessToken;
-      _loadedBackendUrl = cfg.backendUrl;
       _activeBackendProfile = activeProfile;
+      _centralHubProfile = hubProfile;
+      _devProfiles = allProfiles.where((p) => !p.isHub).toList();
     });
     ApiService.configureAccessToken(
       cfg.backendAccessToken,
       backendUrl: cfg.backendUrl,
     );
     _testBackendConnection();
+    if (_hubUrlCtrl.text.isNotEmpty) {
+      _testHubConnection();
+    }
+    _settingsLoaded = true;
   }
 
   Future<String?> _promptForSshPassword() async {
@@ -159,8 +203,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       setState(() {
         _backendUrlCtrl.text = updated.backendUrl;
-        _backendAccessToken = token;
-        _loadedBackendUrl = updated.backendUrl;
+        _backendAccessTokenCtrl.text = token;
         _backendOnline = true;
       });
     } catch (error) {
@@ -177,11 +220,69 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _saveSettings() async {
+  Future<void> _switchDevProfile(BackendProfile profile) async {
+    await StorageService.setActiveBackendProfile(profile.id);
+    final token =
+        await StorageService.loadBackendSecret(profile.id, 'access_token') ??
+        '';
+    final current = await StorageService.loadLLMConfig();
+    final updated = current.copyWith(
+      backendUrl: profile.backendUrl,
+      backendAccessToken: token,
+    );
+    await StorageService.saveLLMConfig(updated);
+    ApiService.configureAccessToken(token, backendUrl: updated.backendUrl);
+    setState(() {
+      _activeBackendProfile = profile;
+      _backendUrlCtrl.text = updated.backendUrl;
+      _backendAccessTokenCtrl.text = token;
+    });
+    _testBackendConnection();
+  }
+
+  Future<void> _addNewDirectServer() async {
+    final result = await AddEditBackendDialog.show(context);
+    if (result != null) {
+      await _loadSettings();
+    }
+  }
+
+  Future<void> _editProfile(BackendProfile profile) async {
+    final result = await AddEditBackendDialog.show(context, profile: profile);
+    if (result != null) {
+      await _loadSettings();
+    }
+  }
+
+  Future<void> _deleteProfile(BackendProfile profile) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Remove ${profile.name}?'),
+        content: const Text(
+          'This will remove the saved server profile from this device.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await StorageService.deleteBackendProfile(profile.id);
+      await _loadSettings();
+    }
+  }
+
+  Future<void> _saveSettings({bool showConfirmation = true}) async {
     final backendUrl = _backendUrlCtrl.text.trim();
-    final accessToken = backendUrl == _loadedBackendUrl
-        ? _backendAccessToken
-        : '';
+    final accessToken = _backendAccessTokenCtrl.text.trim();
     final updated = LLMConfig(
       backendUrl: backendUrl,
       baseUrl: _baseUrlCtrl.text.trim(),
@@ -196,13 +297,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
       updated.backendAccessToken,
       backendUrl: updated.backendUrl,
     );
-    _backendAccessToken = updated.backendAccessToken;
-    _loadedBackendUrl = updated.backendUrl;
 
-    if (mounted) {
+    // Save Central Hub if configured
+    final hubUrl = _hubUrlCtrl.text.trim();
+    final hubToken = _hubAccessTokenCtrl.text.trim();
+    if (hubUrl.isNotEmpty) {
+      final hub = BackendProfile(
+        id: _centralHubProfile?.id ?? 'hub_central',
+        name: 'Dedicated Cloud Hub',
+        host: hubUrl,
+        sshPort: 22,
+        username: 'admin',
+        transport: BackendTransport.directHttp,
+        type: BackendProfileType.centralHub,
+        directUrl: hubUrl,
+        hostKeyType: '',
+        hostKeyFingerprint: '',
+        architecture: 'x86_64',
+        installedVersion: '1.0.0',
+      );
+      await StorageService.saveCentralHubProfile(hub);
+      if (hubToken.isNotEmpty) {
+        await StorageService.saveBackendSecret(
+          hub.id,
+          'access_token',
+          hubToken,
+        );
+      }
+      setState(() => _centralHubProfile = hub);
+    } else if (_centralHubProfile != null) {
+      await StorageService.deleteCentralHubProfile();
+      setState(() => _centralHubProfile = null);
+    }
+
+    if (mounted && showConfirmation) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Settings saved successfully!'),
+        SnackBar(
+          content: Text(
+            StorageService.secretsPersistFailed
+                ? 'Settings saved, but secure storage was unavailable. Secrets were not persisted.'
+                : 'Settings saved successfully!',
+          ),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -215,6 +350,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _backendOnline = null;
     });
 
+    ApiService.configureAccessToken(
+      _backendAccessTokenCtrl.text.trim(),
+      backendUrl: _backendUrlCtrl.text.trim(),
+    );
     final online = await ApiService.testServer(_backendUrlCtrl.text.trim());
     if (mounted) {
       setState(() {
@@ -224,16 +363,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _fetchModels() async {
+  Future<void> _testHubConnection() async {
+    final url = _hubUrlCtrl.text.trim();
+    if (url.isEmpty) return;
+
+    setState(() {
+      _isTestingHub = true;
+      _hubOnline = null;
+    });
+
+    final online = await ApiService.testServer(url);
+    if (mounted) {
+      setState(() {
+        _isTestingHub = false;
+        _hubOnline = online;
+      });
+    }
+  }
+
+  Future<List<ModelInfo>> _fetchModels() async {
     setState(() {
       _isFetchingModels = true;
     });
 
     try {
-      final list = await ApiService.fetchModels(
-        _backendUrlCtrl.text.trim(),
-        _baseUrlCtrl.text.trim(),
-        _apiKeyCtrl.text.trim(),
+      final current = await StorageService.loadLLMConfig();
+      await StorageService.saveLLMConfig(
+        current.copyWith(
+          baseUrl: _baseUrlCtrl.text.trim(),
+          apiKey: _apiKeyCtrl.text.trim(),
+          model: _modelCtrl.text.trim(),
+        ),
+      );
+
+      final list = await ApiService.fetchProviderModels(
+        backendUrl: _backendUrlCtrl.text.trim(),
+        baseUrl: _baseUrlCtrl.text.trim(),
+        apiKey: _apiKeyCtrl.text.trim(),
       );
 
       if (mounted) {
@@ -244,11 +410,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Loaded ${list.length} models from router.'),
+            content: Text('Loaded ${list.length} models from provider.'),
             behavior: SnackBarBehavior.floating,
           ),
         );
       }
+      return list;
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -262,6 +429,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         );
       }
+      return _modelsList;
     }
   }
 
@@ -293,7 +461,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Section 1: PC Backend Connection
+          // Section 1: PC Backend Connection & Multi-Host Devs
           _buildSectionHeader(
             'PC Backend Connection',
             CupertinoIcons.desktopcomputer,
@@ -338,6 +506,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             _backendUrlCtrl.text = 'http://10.0.2.2:8000',
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    key: const Key('backend-access-token-field'),
+                    controller: _backendAccessTokenCtrl,
+                    obscureText: _obscureBackendToken,
+                    decoration: InputDecoration(
+                      labelText: 'Backend Access Token (Optional)',
+                      hintText: 'Configured ACCESS_TOKEN on your server',
+                      prefixIcon: const Icon(CupertinoIcons.lock),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _obscureBackendToken
+                              ? CupertinoIcons.eye
+                              : CupertinoIcons.eye_slash,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _obscureBackendToken = !_obscureBackendToken;
+                          });
+                        },
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      isDense: true,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -385,7 +580,171 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                     ],
                   ),
+
+                  // Configured Dev Host Profiles
                   const SizedBox(height: 14),
+                  const Divider(),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      const Text(
+                        'Saved Server Profiles:',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const Spacer(),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                        ),
+                        onPressed: _addNewDirectServer,
+                        icon: const Icon(CupertinoIcons.plus, size: 14),
+                        label: const Text(
+                          'Add Server',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  if (_devProfiles.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        'No saved server profiles. Add your server above or set up over SSH.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    )
+                  else
+                    ..._devProfiles.map((p) {
+                      final isActive = _activeBackendProfile?.id == p.id;
+                      return Card(
+                        elevation: 0,
+                        margin: const EdgeInsets.only(bottom: 6),
+                        color: isActive
+                            ? theme.colorScheme.primaryContainer.withValues(
+                                alpha: 0.3,
+                              )
+                            : theme.colorScheme.surfaceContainerHighest
+                                  .withValues(alpha: 0.3),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          side: BorderSide(
+                            color: isActive
+                                ? theme.colorScheme.primary.withValues(
+                                    alpha: 0.4,
+                                  )
+                                : theme.colorScheme.outlineVariant.withValues(
+                                    alpha: 0.2,
+                                  ),
+                          ),
+                        ),
+                        child: ListTile(
+                          dense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 2,
+                          ),
+                          leading: Icon(
+                            isActive
+                                ? CupertinoIcons.check_mark_circled_solid
+                                : CupertinoIcons.circle,
+                            color: isActive ? Colors.green : null,
+                          ),
+                          title: Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  p.name,
+                                  style: TextStyle(
+                                    fontWeight: isActive
+                                        ? FontWeight.bold
+                                        : FontWeight.w600,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (isActive) ...[
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 5,
+                                    vertical: 1,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Text(
+                                    'ACTIVE',
+                                    style: TextStyle(
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.green,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          subtitle: Text(
+                            '${p.backendUrl} (${p.transport.name})',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(
+                                  CupertinoIcons.pencil,
+                                  size: 16,
+                                ),
+                                tooltip: 'Edit Server',
+                                onPressed: () => _editProfile(p),
+                              ),
+                              IconButton(
+                                icon: const Icon(
+                                  CupertinoIcons.trash,
+                                  size: 16,
+                                  color: Colors.redAccent,
+                                ),
+                                tooltip: 'Remove Server',
+                                onPressed: () => _deleteProfile(p),
+                              ),
+                            ],
+                          ),
+                          onTap: () => _switchDevProfile(p),
+                        ),
+                      );
+                    }),
+
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _addNewDirectServer,
+                          icon: const Icon(CupertinoIcons.plus, size: 14),
+                          label: const Text(
+                            'Add URL / Host',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 10),
                   const Divider(),
                   const SizedBox(height: 6),
                   ListTile(
@@ -435,7 +794,115 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 20),
 
-          // Section 2: LLM Router & Provider Config
+          // Section 2: Dedicated Cloud Hub (Firecracker VM & Search Server)
+          _buildSectionHeader(
+            'Dedicated Cloud Hub (Optional)',
+            CupertinoIcons.cloud_upload,
+          ),
+          Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Powers Firecracker microVM sandboxes, live web search, and secure artifact sharing.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _hubUrlCtrl,
+                    decoration: InputDecoration(
+                      labelText: 'Central Hub URL',
+                      hintText: 'https://hub.example.com',
+                      prefixIcon: const Icon(CupertinoIcons.cube_box),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _hubAccessTokenCtrl,
+                    obscureText: _obscureHubToken,
+                    decoration: InputDecoration(
+                      labelText: 'Hub Access Token (Optional)',
+                      hintText: 'Configured ACCESS_TOKEN on your Hub',
+                      prefixIcon: const Icon(CupertinoIcons.lock),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _obscureHubToken
+                              ? CupertinoIcons.eye
+                              : CupertinoIcons.eye_slash,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _obscureHubToken = !_obscureHubToken;
+                          });
+                        },
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      FilledButton.tonalIcon(
+                        onPressed: _isTestingHub ? null : _testHubConnection,
+                        icon: _isTestingHub
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(CupertinoIcons.bolt, size: 18),
+                        label: const Text('Test Hub Connection'),
+                      ),
+                      const SizedBox(width: 12),
+                      if (_hubOnline != null)
+                        Row(
+                          children: [
+                            Icon(
+                              _hubOnline!
+                                  ? CupertinoIcons.check_mark_circled
+                                  : CupertinoIcons.clear,
+                              color: _hubOnline! ? Colors.green : Colors.red,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              _hubOnline! ? 'Hub Online' : 'Unreachable',
+                              style: TextStyle(
+                                color: _hubOnline! ? Colors.green : Colors.red,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // Section 3: LLM Router & Provider Config
           _buildSectionHeader(
             'LLM Provider & Router',
             CupertinoIcons.lightbulb,

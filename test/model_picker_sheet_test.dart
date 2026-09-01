@@ -153,4 +153,56 @@ void main() {
     expect(find.text('Llama 3.3 70B (Free)'), findsNothing);
     expect(find.text('GPT-4o'), findsNothing);
   });
+
+  testWidgets(
+    'ModelPickerSheet does not show hardcoded models when none are loaded',
+    (WidgetTester tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ModelPickerSheet(
+              selectedModelId: '',
+              availableModels: const [],
+              onModelSelected: _ignoreModel,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('No models loaded'), findsOneWidget);
+      expect(find.text('Claude 3.7 Sonnet'), findsNothing);
+      expect(find.text('GPT-4o'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'ModelPickerSheet refresh loads provider models into an empty sheet',
+    (WidgetTester tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ModelPickerSheet(
+              selectedModelId: '',
+              availableModels: const [],
+              onRefresh: () async => const [
+                ModelInfo(
+                  id: 'openrouter/real-model',
+                  name: 'Real Provider Model',
+                ),
+              ],
+              onModelSelected: _ignoreModel,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Real Provider Model'), findsOneWidget);
+      expect(find.text('No models loaded'), findsNothing);
+      expect(find.text('Claude 3.7 Sonnet'), findsNothing);
+    },
+  );
 }
+
+void _ignoreModel(ModelInfo _) {}

@@ -7,7 +7,7 @@ class ModelPickerSheet extends StatefulWidget {
   final String selectedModelId;
   final List<ModelInfo> availableModels;
   final ValueChanged<ModelInfo> onModelSelected;
-  final Future<void> Function()? onRefresh;
+  final Future<List<ModelInfo>> Function()? onRefresh;
 
   const ModelPickerSheet({
     super.key,
@@ -17,120 +17,12 @@ class ModelPickerSheet extends StatefulWidget {
     this.onRefresh,
   });
 
-  static const List<ModelInfo> defaultCuratedModels = [
-    ModelInfo(
-      id: 'anthropic/claude-3.7-sonnet',
-      name: 'Claude 3.7 Sonnet',
-      description: 'Hybrid reasoning and leading code-generation flagship model by Anthropic.',
-      contextLength: 200000,
-    ),
-    ModelInfo(
-      id: 'anthropic/claude-3.5-sonnet',
-      name: 'Claude 3.5 Sonnet',
-      description:
-          'Industry-standard coding and autonomous agentic model by Anthropic.',
-      contextLength: 200000,
-    ),
-    ModelInfo(
-      id: 'anthropic/claude-3.5-haiku',
-      name: 'Claude 3.5 Haiku',
-      description: 'Ultra-fast and cost-effective Anthropic model.',
-      contextLength: 200000,
-    ),
-    ModelInfo(
-      id: 'anthropic/claude-3-opus',
-      name: 'Claude 3 Opus',
-      description: 'Deep reasoning and complex synthesis model by Anthropic.',
-      contextLength: 200000,
-    ),
-    ModelInfo(
-      id: 'meta-llama/llama-3.3-70b-instruct:free',
-      name: 'Llama 3.3 70B Instruct (Free)',
-      description: 'Free tier high-performance 70B open-weights model by Meta.',
-      contextLength: 131072,
-    ),
-    ModelInfo(
-      id: 'deepseek/deepseek-r1:free',
-      name: 'DeepSeek R1 (Free)',
-      description: 'Free tier advanced reasoning & chain-of-thought model.',
-      contextLength: 64000,
-    ),
-    ModelInfo(
-      id: 'deepseek/deepseek-chat:free',
-      name: 'DeepSeek V3 (Free)',
-      description: 'Free tier flagship general coding & conversation model.',
-      contextLength: 64000,
-    ),
-    ModelInfo(
-      id: 'google/gemini-2.0-flash-exp:free',
-      name: 'Gemini 2.0 Flash Exp (Free)',
-      description: 'Free experimental ultra-fast multimodal model by Google.',
-      contextLength: 1048576,
-    ),
-    ModelInfo(
-      id: 'qwen/qwen-2.5-coder-32b-instruct:free',
-      name: 'Qwen 2.5 Coder 32B (Free)',
-      description:
-          'Free specialized coding model with deep repo understanding.',
-      contextLength: 32768,
-    ),
-    ModelInfo(
-      id: 'mistralai/mistral-7b-instruct:free',
-      name: 'Mistral 7B Instruct (Free)',
-      description: 'Free high-speed lightweight model by Mistral AI.',
-      contextLength: 32768,
-    ),
-    ModelInfo(
-      id: 'openai/gpt-4o',
-      name: 'GPT-4o',
-      description: 'Flagship multimodal omni intelligence model by OpenAI.',
-      contextLength: 128000,
-    ),
-    ModelInfo(
-      id: 'openai/gpt-4o-mini',
-      name: 'GPT-4o Mini',
-      description: 'Fast, compact, and affordable model by OpenAI.',
-      contextLength: 128000,
-    ),
-    ModelInfo(
-      id: 'openai/o3-mini',
-      name: 'OpenAI o3-mini',
-      description: 'Next-gen cost-efficient reasoning model optimized for STEM and coding.',
-      contextLength: 200000,
-    ),
-    ModelInfo(
-      id: 'deepseek/deepseek-chat',
-      name: 'DeepSeek V3',
-      description:
-          'Powerful 671B mixture-of-experts model for software development.',
-      contextLength: 64000,
-    ),
-    ModelInfo(
-      id: 'deepseek/deepseek-r1',
-      name: 'DeepSeek R1',
-      description: 'Specialized deep reasoning model with open reflection.',
-      contextLength: 64000,
-    ),
-    ModelInfo(
-      id: 'google/gemini-2.0-flash-001',
-      name: 'Gemini 2.0 Flash',
-      description: 'High-speed 1M context multimodal model by Google.',
-      contextLength: 1000000,
-    ),
-    ModelInfo(
-      id: 'meta-llama/llama-3.3-70b-instruct',
-      name: 'Llama 3.3 70B Instruct',
-      description: 'High-capacity instruction-tuned model by Meta.',
-      contextLength: 131072,
-    ),
-  ];
-
   static Future<void> show({
     required BuildContext context,
     required String selectedModelId,
     required List<ModelInfo> availableModels,
     required ValueChanged<ModelInfo> onModelSelected,
-    Future<void> Function()? onRefresh,
+    Future<List<ModelInfo>> Function()? onRefresh,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -157,6 +49,20 @@ class _ModelPickerSheetState extends State<ModelPickerSheet> {
   final TextEditingController _searchCtrl = TextEditingController();
   String _selectedFilter = 'all'; // 'all', 'free', 'anthropic', 'openai', etc.
   bool _isRefreshing = false;
+  late List<ModelInfo> _models;
+
+  @override
+  void initState() {
+    super.initState();
+    _models = List<ModelInfo>.from(widget.availableModels);
+    if (_models.isEmpty && widget.onRefresh != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _refreshModels();
+        }
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -164,12 +70,24 @@ class _ModelPickerSheetState extends State<ModelPickerSheet> {
     super.dispose();
   }
 
-  List<ModelInfo> get _allModels {
-    if (widget.availableModels.isNotEmpty) {
-      return widget.availableModels;
+  Future<void> _refreshModels() async {
+    final refresh = widget.onRefresh;
+    if (refresh == null || _isRefreshing) return;
+    setState(() => _isRefreshing = true);
+    try {
+      final list = await refresh();
+      if (!mounted) return;
+      setState(() {
+        _models = List<ModelInfo>.from(list);
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isRefreshing = false);
+      }
     }
-    return ModelPickerSheet.defaultCuratedModels;
   }
+
+  List<ModelInfo> get _allModels => _models;
 
   List<ModelInfo> get _filteredModels {
     final query = _searchCtrl.text.trim().toLowerCase();
@@ -354,22 +272,7 @@ class _ModelPickerSheetState extends State<ModelPickerSheet> {
                             )
                           : const Icon(CupertinoIcons.refresh),
                       tooltip: 'Refresh Models from Router',
-                      onPressed: _isRefreshing
-                          ? null
-                          : () async {
-                              setState(() {
-                                _isRefreshing = true;
-                              });
-                              try {
-                                await widget.onRefresh!();
-                              } finally {
-                                if (mounted) {
-                                  setState(() {
-                                    _isRefreshing = false;
-                                  });
-                                }
-                              }
-                            },
+                      onPressed: _isRefreshing ? null : _refreshModels,
                     ),
                   IconButton(
                     icon: const Icon(CupertinoIcons.xmark),
@@ -451,7 +354,9 @@ class _ModelPickerSheetState extends State<ModelPickerSheet> {
 
             // Model items list
             Expanded(
-              child: filtered.isEmpty
+              child: _isRefreshing && _allModels.isEmpty
+                  ? const Center(child: CircularProgressIndicator())
+                  : filtered.isEmpty
                   ? Center(
                       child: Padding(
                         padding: const EdgeInsets.all(24.0),
@@ -459,21 +364,27 @@ class _ModelPickerSheetState extends State<ModelPickerSheet> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
-                              CupertinoIcons.search,
+                              _allModels.isEmpty
+                                  ? CupertinoIcons.cloud_download
+                                  : CupertinoIcons.search,
                               size: 48,
                               color: theme.colorScheme.onSurfaceVariant
                                   .withValues(alpha: 0.5),
                             ),
                             const SizedBox(height: 12),
                             Text(
-                              'No models found',
+                              _allModels.isEmpty
+                                  ? 'No models loaded'
+                                  : 'No models found',
                               style: theme.textTheme.titleSmall?.copyWith(
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              _searchCtrl.text.isNotEmpty
+                              _allModels.isEmpty
+                                  ? 'Fetch the live model list from your provider.'
+                                  : _searchCtrl.text.isNotEmpty
                                   ? 'No matches for "${_searchCtrl.text}"'
                                   : 'No models found in this category.',
                               style: TextStyle(
@@ -483,19 +394,31 @@ class _ModelPickerSheetState extends State<ModelPickerSheet> {
                               textAlign: TextAlign.center,
                             ),
                             const SizedBox(height: 12),
-                            OutlinedButton.icon(
-                              onPressed: () {
-                                setState(() {
-                                  _searchCtrl.clear();
-                                  _selectedFilter = 'all';
-                                });
-                              },
-                              icon: const Icon(
-                                CupertinoIcons.refresh,
-                                size: 16,
+                            if (_allModels.isEmpty && widget.onRefresh != null)
+                              FilledButton.tonalIcon(
+                                onPressed: _isRefreshing
+                                    ? null
+                                    : _refreshModels,
+                                icon: const Icon(
+                                  CupertinoIcons.cloud_download,
+                                  size: 16,
+                                ),
+                                label: const Text('Fetch from provider'),
+                              )
+                            else if (_allModels.isNotEmpty)
+                              OutlinedButton.icon(
+                                onPressed: () {
+                                  setState(() {
+                                    _searchCtrl.clear();
+                                    _selectedFilter = 'all';
+                                  });
+                                },
+                                icon: const Icon(
+                                  CupertinoIcons.refresh,
+                                  size: 16,
+                                ),
+                                label: const Text('Reset Filters'),
                               ),
-                              label: const Text('Reset Filters'),
-                            ),
                           ],
                         ),
                       ),

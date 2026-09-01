@@ -38,6 +38,15 @@ class _PreviewBrowserScreenState extends State<PreviewBrowserScreen> {
       ..setBackgroundColor(Theme.of(context).colorScheme.surface)
       ..setNavigationDelegate(
         NavigationDelegate(
+          onNavigationRequest: (request) {
+            return ApiService.isPreviewNavigationAllowed(
+                  backendUrl: widget.backendUrl,
+                  entryId: widget.entry.id,
+                  url: request.url,
+                )
+                ? NavigationDecision.navigate
+                : NavigationDecision.prevent;
+          },
           onPageStarted: (url) {
             if (mounted) {
               setState(() {
@@ -69,7 +78,17 @@ class _PreviewBrowserScreenState extends State<PreviewBrowserScreen> {
   }
 
   Future<void> _reload() async {
-    await _controller.reload();
+    final current = Uri.tryParse(_currentUrl);
+    final target =
+        current != null &&
+            ApiService.isPreviewNavigationAllowed(
+              backendUrl: widget.backendUrl,
+              entryId: widget.entry.id,
+              url: current.toString(),
+            )
+        ? current
+        : ApiService.previewUri(widget.backendUrl, entryId: widget.entry.id);
+    await _controller.loadRequest(target, headers: _authHeadersFor(target));
   }
 
   Future<void> _goHome() async {

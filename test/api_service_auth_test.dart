@@ -111,4 +111,39 @@ void main() {
 
     ApiService.configureAccessToken('');
   });
+
+  test('preview navigation stays on the backend proxy origin and entry', () {
+    expect(
+      ApiService.isPreviewNavigationAllowed(
+        backendUrl: 'https://trusted.example.com',
+        entryId: 'prev_1',
+        url: 'https://trusted.example.com/api/v1/preview/proxy/prev_1/app',
+      ),
+      isTrue,
+    );
+    expect(
+      ApiService.isPreviewNavigationAllowed(
+        backendUrl: 'https://trusted.example.com',
+        entryId: 'prev_1',
+        url: 'https://evil.example.com/api/v1/preview/proxy/prev_1/',
+      ),
+      isFalse,
+    );
+    expect(
+      ApiService.isPreviewNavigationAllowed(
+        backendUrl: 'https://trusted.example.com',
+        entryId: 'prev_1',
+        url: 'https://trusted.example.com/api/v1/fs/browse',
+      ),
+      isFalse,
+    );
+    expect(
+      ApiService.isPreviewNavigationAllowed(
+        backendUrl: 'https://trusted.example.com',
+        entryId: 'prev_1',
+        url: 'javascript:alert(1)',
+      ),
+      isFalse,
+    );
+  });
 }

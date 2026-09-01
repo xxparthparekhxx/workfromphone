@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+import 'package:workfromphone/models/backend_profile.dart';
 import 'package:workfromphone/models/llm_config.dart';
 import 'package:workfromphone/models/project_directory.dart';
 import 'package:workfromphone/screens/chat/conversation_history_sheet.dart';
@@ -7,6 +8,8 @@ import 'package:workfromphone/screens/chat/project_chat_screen.dart';
 import 'package:workfromphone/screens/projects/directory_picker_dialog.dart';
 import 'package:workfromphone/services/api_service.dart';
 import 'package:workfromphone/services/storage_service.dart';
+import 'package:workfromphone/widgets/add_edit_backend_dialog.dart';
+import 'package:workfromphone/widgets/server_picker_sheet.dart';
 
 class ProjectsScreen extends StatefulWidget {
   const ProjectsScreen({super.key});
@@ -18,6 +21,7 @@ class ProjectsScreen extends StatefulWidget {
 class _ProjectsScreenState extends State<ProjectsScreen> {
   List<ProjectDirectory> _projects = [];
   LLMConfig _llmConfig = const LLMConfig();
+  BackendProfile? _activeProfile;
   bool _isLoading = true;
   bool _isServerOnline = false;
   String _searchQuery = '';
@@ -34,6 +38,8 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     });
 
     final cfg = await StorageService.loadLLMConfig();
+    final activeProfile = await StorageService.loadActiveBackendProfile();
+
     ApiService.configureAccessToken(
       cfg.backendAccessToken,
       backendUrl: cfg.backendUrl,
@@ -44,10 +50,22 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     if (mounted) {
       setState(() {
         _llmConfig = cfg;
+        _activeProfile = activeProfile;
         _projects = list;
         _isServerOnline = online;
         _isLoading = false;
       });
+    }
+  }
+
+  void _openServerPicker() {
+    ServerPickerSheet.show(context, onServerChanged: _loadData);
+  }
+
+  Future<void> _addNewServer() async {
+    final result = await AddEditBackendDialog.show(context);
+    if (result != null) {
+      await _loadData();
     }
   }
 
@@ -152,6 +170,14 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
         )
         .toList();
 
+    final activeHostName =
+        _activeProfile?.name ??
+        (_llmConfig.backendUrl.isEmpty
+            ? 'Local Host'
+            : _llmConfig.backendUrl
+                  .replaceAll('http://', '')
+                  .replaceAll('https://', ''));
+
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -159,29 +185,48 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
         actions: [
-          // Server status indicator
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: _isServerOnline ? Colors.green : Colors.red,
-                    shape: BoxShape.circle,
-                  ),
+          // Server status indicator with quick switch action
+          InkWell(
+            onTap: _openServerPicker,
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.5,
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  _isServerOnline ? 'PC Online' : 'PC Offline',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: _isServerOnline ? Colors.green : Colors.red,
-                    fontWeight: FontWeight.bold,
-                  ),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: _isServerOnline
+                      ? Colors.green.withValues(alpha: 0.4)
+                      : Colors.red.withValues(alpha: 0.4),
                 ),
-              ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: _isServerOnline ? Colors.green : Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _isServerOnline ? 'Host Online' : 'Host Offline',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: _isServerOnline ? Colors.green : Colors.red,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(CupertinoIcons.chevron_down, size: 12),
+                ],
+              ),
             ),
           ),
         ],
@@ -193,6 +238,87 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
             : ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  // Prominent Active Host Switcher Bar
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 14),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: theme.colorScheme.outlineVariant.withValues(
+                          alpha: 0.35,
+                        ),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          CupertinoIcons.desktopcomputer,
+                          size: 18,
+                          color: theme.colorScheme.primary,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: InkWell(
+                            onTap: _openServerPicker,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      activeHostName,
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    const Icon(
+                                      CupertinoIcons.chevron_down,
+                                      size: 12,
+                                    ),
+                                  ],
+                                ),
+                                Text(
+                                  _llmConfig.backendUrl,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                    fontFamily: 'monospace',
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          onPressed: _addNewServer,
+                          icon: const Icon(CupertinoIcons.plus, size: 14),
+                          label: const Text(
+                            'Add Host',
+                            style: TextStyle(fontSize: 11),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
                   // Server connection notice if offline
                   if (!_isServerOnline)
                     Container(
@@ -224,7 +350,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                                   ),
                                 ),
                                 Text(
-                                  'Make sure FastAPI is running on your PC (${_llmConfig.backendUrl}).',
+                                  'Make sure FastAPI is running on your host (${_llmConfig.backendUrl}).',
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: theme.colorScheme.onErrorContainer,
@@ -275,14 +401,14 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                                             fontWeight: FontWeight.bold,
                                           ),
                                     ),
+                                    const SizedBox(height: 2),
                                     Text(
-                                      'Select any project root folder on your computer to start chat and tasks.',
-                                      style: theme.textTheme.bodySmall
-                                          ?.copyWith(
-                                            color: theme
-                                                .colorScheme
-                                                .onSurfaceVariant,
-                                          ),
+                                      'Select any directory on your computer to begin coding with AI assistance.',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color:
+                                            theme.colorScheme.onSurfaceVariant,
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -293,8 +419,12 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                           SizedBox(
                             width: double.infinity,
                             child: FilledButton.icon(
-                              onPressed: _pickDirectory,
-                              icon: const Icon(CupertinoIcons.folder_open),
+                              onPressed: _isServerOnline
+                                  ? _pickDirectory
+                                  : null,
+                              icon: const Icon(
+                                CupertinoIcons.folder_badge_plus,
+                              ),
                               label: const Text(
                                 'Browse & Select Project Directory',
                               ),
@@ -305,214 +435,199 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                     ),
                   ),
 
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 24),
 
-                  // Search bar
-                  if (_projects.isNotEmpty) ...[
-                    TextField(
-                      decoration: InputDecoration(
-                        isDense: true,
-                        hintText: 'Search recent projects...',
-                        prefixIcon: const Icon(CupertinoIcons.search, size: 20),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
+                  // Recent Projects Header
+                  Row(
+                    children: [
+                      const Icon(CupertinoIcons.clock_fill, size: 16),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Recent Projects',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
+                      const Spacer(),
+                      if (_projects.isNotEmpty)
+                        Text(
+                          '${_projects.length} project${_projects.length == 1 ? "" : "s"}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  // Search Bar for recent projects
+                  if (_projects.length > 3) ...[
+                    TextField(
                       onChanged: (val) {
                         setState(() {
                           _searchQuery = val;
                         });
                       },
+                      decoration: InputDecoration(
+                        hintText: 'Filter recent projects...',
+                        prefixIcon: const Icon(CupertinoIcons.search, size: 18),
+                        isDense: true,
+                        filled: true,
+                        fillColor: theme.colorScheme.surfaceContainerHighest
+                            .withValues(alpha: 0.5),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                      ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                   ],
 
-                  // Recent projects header
-                  Row(
-                    children: [
-                      Text(
-                        'Recent Workspaces',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: theme.colorScheme.primary,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '(${_projects.length})',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-
-                  if (filtered.isEmpty)
-                    Center(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 40),
-                        child: Column(
-                          children: [
-                            Icon(
-                              CupertinoIcons.folder_open,
-                              size: 56,
-                              color: theme.colorScheme.onSurfaceVariant
-                                  .withValues(alpha: 0.5),
+                  // Recent Projects List
+                  if (_projects.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(32),
+                      alignment: Alignment.center,
+                      child: Column(
+                        children: [
+                          Icon(
+                            CupertinoIcons.folder_badge_minus,
+                            size: 48,
+                            color: theme.colorScheme.outlineVariant,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'No recent projects yet',
+                            style: TextStyle(
+                              color: theme.colorScheme.onSurfaceVariant,
+                              fontWeight: FontWeight.w500,
                             ),
-                            const SizedBox(height: 12),
-                            Text(
-                              _searchQuery.isEmpty
-                                  ? 'No workspaces added yet'
-                                  : 'No projects match "$_searchQuery"',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Use the button above to select your first workspace folder.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: theme.colorScheme.onSurfaceVariant,
                             ),
-                          ],
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    )
+                  else if (filtered.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Center(
+                        child: Text(
+                          'No projects match "$_searchQuery"',
+                          style: TextStyle(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
                     )
                   else
                     ...filtered.map((project) {
                       return Card(
-                        margin: const EdgeInsets.symmetric(vertical: 6),
+                        elevation: 0,
+                        margin: const EdgeInsets.only(bottom: 8),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(12),
                           side: BorderSide(
                             color: theme.colorScheme.outlineVariant.withValues(
-                              alpha: 0.5,
+                              alpha: 0.4,
                             ),
                           ),
                         ),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 6,
-                          ),
-                          leading: CircleAvatar(
-                            backgroundColor:
-                                theme.colorScheme.surfaceContainerHighest,
-                            child: Icon(
-                              CupertinoIcons.command,
-                              color: theme.colorScheme.primary,
-                            ),
-                          ),
-                          title: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  project.name,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 15,
-                                  ),
-                                ),
-                              ),
-                              _buildProjectTypeBadge(project.projectType),
-                            ],
-                          ),
-                          subtitle: Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                              project.path,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontFamily: 'monospace',
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(
-                                  CupertinoIcons.bubble_left,
-                                  size: 20,
-                                ),
-                                tooltip: 'Conversations',
-                                onPressed: () => _openConversations(project),
-                              ),
-                              PopupMenuButton<String>(
-                                icon: const Icon(
-                                  CupertinoIcons.ellipsis,
-                                  size: 20,
-                                ),
-                                onSelected: (action) {
-                                  if (action == 'chat') {
-                                    _openChat(project);
-                                  } else if (action == 'conversations') {
-                                    _openConversations(project);
-                                  } else if (action == 'remove') {
-                                    _removeProject(project);
-                                  }
-                                },
-                                itemBuilder: (_) => [
-                                  const PopupMenuItem(
-                                    value: 'chat',
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          CupertinoIcons.chat_bubble,
-                                          size: 18,
-                                        ),
-                                        SizedBox(width: 8),
-                                        Text('Open Workspace'),
-                                      ],
-                                    ),
-                                  ),
-                                  const PopupMenuItem(
-                                    value: 'conversations',
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          CupertinoIcons.bubble_left,
-                                          size: 18,
-                                        ),
-                                        SizedBox(width: 8),
-                                        Text('All Conversations'),
-                                      ],
-                                    ),
-                                  ),
-                                  const PopupMenuItem(
-                                    value: 'remove',
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          CupertinoIcons.trash,
-                                          size: 18,
-                                          color: Colors.red,
-                                        ),
-                                        SizedBox(width: 8),
-                                        Text(
-                                          'Remove',
-                                          style: TextStyle(color: Colors.red),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
                           onTap: () => _openChat(project),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Row(
+                              children: [
+                                CircleAvatar(
+                                  backgroundColor:
+                                      theme.colorScheme.secondaryContainer,
+                                  child: Icon(
+                                    CupertinoIcons.folder,
+                                    color:
+                                        theme.colorScheme.onSecondaryContainer,
+                                    size: 20,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Flexible(
+                                            child: Text(
+                                              project.name,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 14,
+                                              ),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          _buildProjectTypeBadge(
+                                            project.projectType,
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        project.path,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: theme
+                                              .colorScheme
+                                              .onSurfaceVariant,
+                                          fontFamily: 'monospace',
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(
+                                    CupertinoIcons.chat_bubble_2,
+                                    size: 20,
+                                  ),
+                                  tooltip: 'Conversation History',
+                                  onPressed: () => _openConversations(project),
+                                ),
+                                IconButton(
+                                  icon: const Icon(
+                                    CupertinoIcons.delete,
+                                    size: 18,
+                                    color: Colors.redAccent,
+                                  ),
+                                  tooltip: 'Remove from Recents',
+                                  onPressed: () => _removeProject(project),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       );
                     }),
                 ],
               ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _pickDirectory,
-        icon: const Icon(CupertinoIcons.add),
-        label: const Text('Add Project'),
       ),
     );
   }

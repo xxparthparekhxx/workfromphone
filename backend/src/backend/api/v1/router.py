@@ -1,5 +1,15 @@
 from fastapi import APIRouter
-from backend.api.v1.endpoints import fs, git, health, llm, preview, system, terminal
+from backend.api.v1.endpoints import (
+    artifacts,
+    fs,
+    git,
+    health,
+    llm,
+    preview,
+    search,
+    system,
+    terminal,
+)
 
 api_v1_router = APIRouter()
 api_v1_router.include_router(health.router)
@@ -9,3 +19,5 @@ api_v1_router.include_router(git.router)
 api_v1_router.include_router(terminal.router)
 api_v1_router.include_router(system.router)
 api_v1_router.include_router(preview.router)
+api_v1_router.include_router(artifacts.router)
+api_v1_router.include_router(search.router)

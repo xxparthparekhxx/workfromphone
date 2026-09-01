@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, WebSocket, Query
 
+from backend.core.security import INTERNAL_ERROR_DETAIL
 from backend.schemas.terminal import TerminalRunRequest, TerminalRunResponse
 from backend.services.terminal_service import terminal_service
 
@@ -10,8 +11,8 @@ router = APIRouter(prefix="/terminal", tags=["Terminal"])
 async def run_command(req: TerminalRunRequest) -> TerminalRunResponse:
     try:
         return await terminal_service.run_command(req)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
 
 
 @router.websocket("/ws")
