@@ -66,3 +66,6 @@ app.*.map.json
 /.agents/
 /.claude/
 /.cursor/
+
+# On-device container: proot binaries are fetched, not checked in
+android/app/src/main/jniLibs/*/*.so

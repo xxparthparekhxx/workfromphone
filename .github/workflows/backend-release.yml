@@ -53,13 +53,71 @@ jobs:
           name: backend-${{ matrix.architecture }}
           path: backend/workfromphone-backend-linux-${{ matrix.architecture }}.tar.gz
 
-  publish:
+  rootfs:
+    # Debian userland for on-device (proot) mode. Assembles the overlay-only
+    # rootfs tarball per arch from the backend binaries built above; full
+    # debootstrap images are built locally via rootfs/build-debian-rootfs.sh.
     needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            debian_arch: amd64
+          - architecture: aarch64
+            debian_arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: backend-${{ matrix.architecture }}
+          merge-multiple: true
+          path: backend-dist
+      - name: Assemble rootfs overlay tarball
+        run: |
+          tar -tzf "backend-dist/workfromphone-backend-linux-${{ matrix.architecture }}.tar.gz"
+          export VERSION="${GITHUB_REF_NAME#backend-v}"
+          bash rootfs/build-debian-rootfs.sh "${{ matrix.debian_arch }}" --overlay-only \
+            --out dist-rootfs \
+            --backend-tar "backend-dist/workfromphone-backend-linux-${{ matrix.architecture }}.tar.gz"
+          mkdir -p release
+          mv dist-rootfs/workfromphone-rootfs-debian-${{ matrix.architecture }}.tar.gz release/
+      - name: Verify rootfs overlay contents and launch guard
+        # Contents + token-guard check only: the overlay carries no Debian
+        # userland on the runner, so a real guest boot happens on-device
+        # (see the physical-arm64 QA checklist in README No-PC mode).
+        run: |
+          rm -rf /tmp/rootfs-smoke && mkdir -p /tmp/rootfs-smoke
+          tar -xzf release/workfromphone-rootfs-debian-${{ matrix.architecture }}.tar.gz -C /tmp/rootfs-smoke
+          test -x /tmp/rootfs-smoke/opt/workfromphone/workfromphone-backend
+          test -x /tmp/rootfs-smoke/opt/workfromphone/launch.sh
+          test -x /tmp/rootfs-smoke/opt/workfromphone/bootstrap.sh
+          sh -n /tmp/rootfs-smoke/opt/workfromphone/launch.sh
+          sh -n /tmp/rootfs-smoke/opt/workfromphone/bootstrap.sh
+          cat /tmp/rootfs-smoke/opt/workfromphone/VERSION
+          # The launcher must refuse to start without ACCESS_TOKEN, even on loopback.
+          if ACCESS_TOKEN= PORT=18766 /tmp/rootfs-smoke/opt/workfromphone/launch.sh; then
+            echo "launch.sh must fail without ACCESS_TOKEN" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rootfs-${{ matrix.architecture }}
+          path: release/workfromphone-rootfs-debian-${{ matrix.architecture }}.tar.gz
+
+  publish:
+    needs: [build, rootfs]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           pattern: backend-*
+          merge-multiple: true
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: rootfs-*
           merge-multiple: true
           path: release
       - name: Create release manifest
@@ -91,6 +149,27 @@ jobs:
           }
           (release / "backend-manifest.json").write_text(
               json.dumps(manifest, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          rootfs_artifacts = {}
+          for architecture in ("x86_64", "aarch64"):
+              name = f"workfromphone-rootfs-debian-{architecture}.tar.gz"
+              archive = release / name
+              rootfs_artifacts[architecture] = {
+                  "url": (
+                      f"https://github.com/{os.environ['REPOSITORY']}/releases/"
+                      f"download/{os.environ['TAG']}/{name}"
+                  ),
+                  "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+              }
+          rootfs_manifest = {
+              "version": os.environ["TAG"].removeprefix("backend-v"),
+              "debian": "bookworm",
+              "artifacts": rootfs_artifacts,
+          }
+          (release / "rootfs-manifest.json").write_text(
+              json.dumps(rootfs_manifest, indent=2) + "\n",
               encoding="utf-8",
           )
           PY

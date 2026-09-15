@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:workfromphone/models/backend_profile.dart';
 import 'package:workfromphone/models/llm_config.dart';
 import 'package:workfromphone/models/model_info.dart';
+import 'package:workfromphone/screens/settings/on_device_setup_screen.dart';
 import 'package:workfromphone/screens/settings/remote_backend_setup_screen.dart';
 import 'package:workfromphone/services/api_service.dart';
 import 'package:workfromphone/services/remote_setup_service.dart';
@@ -747,6 +748,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const SizedBox(height: 10),
                   const Divider(),
                   const SizedBox(height: 6),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const CircleAvatar(
+                      child: Icon(CupertinoIcons.cube_box),
+                    ),
+                    title: const Text('Run backend on this phone'),
+                    subtitle: const Text(
+                      'No-PC mode: Debian container with the backend built in',
+                    ),
+                    trailing: const Icon(CupertinoIcons.chevron_right),
+                    onTap: () async {
+                      final configured = await Navigator.push<bool>(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const OnDeviceSetupScreen(),
+                        ),
+                      );
+                      if (configured == true) {
+                        await _loadSettings();
+                      }
+                    },
+                  ),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const CircleAvatar(
