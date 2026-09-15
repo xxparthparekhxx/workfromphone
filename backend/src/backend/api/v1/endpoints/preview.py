@@ -1,6 +1,3 @@
-import asyncio
-from typing import Optional
-
 import httpx
 from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import Response
@@ -86,13 +83,37 @@ _HOP_BY_HOP_HEADERS = {
     "host",
 }
 
+#: Response headers never forwarded from the upstream dev server. ``set-cookie``
+#: is stripped so a malicious/compromised preview target cannot plant cookies
+#: on the backend origin (the proxy shares the API origin in the WebView).
+_STRIPPED_RESPONSE_HEADERS = _HOP_BY_HOP_HEADERS | {"set-cookie"}
+
+_shared_preview_client: httpx.AsyncClient | None = None
+
+
+def _preview_client() -> httpx.AsyncClient:
+    global _shared_preview_client
+    if _shared_preview_client is None:
+        _shared_preview_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(20.0),
+            follow_redirects=False,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _shared_preview_client
+
 
 def _filter_response_headers(headers) -> dict[str, str]:
     pairs: dict[str, str] = {}
     for key, value in headers.items():
-        if key.lower() in _HOP_BY_HOP_HEADERS:
+        if key.lower() in _STRIPPED_RESPONSE_HEADERS:
             continue
         pairs[key] = value
+    # The proxy shares the backend origin in the in-app WebView; keep upstream
+    # pages from being framed elsewhere while leaving scripts/styles alone so
+    # dev servers keep working.
+    pairs.setdefault("X-Content-Type-Options", "nosniff")
+    pairs.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+    pairs.setdefault("Referrer-Policy", "no-referrer")
     return pairs
 
 
@@ -124,17 +145,25 @@ async def proxy_preview(
     else:
         upstream_path = forwarded_path
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
-        response = await _issue(client, request, entry.port, upstream_path)
+    from backend.core.config import settings as _settings
 
-        if (
-            response.status_code == 404
-            and request.method.upper() == "GET"
-            and not _looks_like_asset(upstream_path)
-        ):
-            fallback_path = base_prefix or "/"
-            response = await _issue(client, request, entry.port, fallback_path)
+    max_body = int(_settings.PREVIEW_MAX_BODY_BYTES)
+    client = _preview_client()
+    response = await _issue(client, request, entry.port, upstream_path, max_body=max_body)
 
+    if (
+        response.status_code == 404
+        and request.method.upper() == "GET"
+        and not _looks_like_asset(upstream_path)
+    ):
+        fallback_path = base_prefix or "/"
+        response = await _issue(client, request, entry.port, fallback_path, max_body=max_body)
+
+    if len(response.content) > max_body:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Upstream preview body exceeds the {max_body}-byte proxy limit",
+        )
     return Response(
         content=response.content,
         status_code=response.status_code,
@@ -148,8 +177,15 @@ async def _issue(
     request: Request,
     port: int,
     upstream_path: str,
+    *,
+    max_body: int = 10 * 1024 * 1024,
 ) -> httpx.Response:
     body = await request.body()
+    if len(body) > max_body:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Preview proxy request body exceeds the {max_body}-byte limit",
+        )
     headers = {
         key: value
         for key, value in request.headers.items()

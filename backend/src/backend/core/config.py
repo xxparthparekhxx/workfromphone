@@ -13,7 +13,37 @@ class Settings(BaseSettings):
     PORT: int = 8000
     ACCESS_TOKEN: str = ""
     MAX_UPLOAD_BYTES: int = 512 * 1024 * 1024
+    MAX_UPLOAD_FILES: int = 20
+    MAX_UPLOAD_TOTAL_BYTES: int = 512 * 1024 * 1024
     SEARXNG_URL: str = "http://localhost:8080"
+    # When True, outbound LLM/search requests may target RFC 1918 / ULA
+    # addresses (LAN-local Ollama, SearXNG). Default False: only loopback and
+    # public addresses pass assert_safe_outbound_url; metadata, link-local,
+    # 0.0.0.0, multicast and documentation ranges are always blocked.
+    ALLOW_PRIVATE_OUTBOUND: bool = False
+    # Default workspace root inside constrained runtimes (Android proot,
+    # containers). When set to an existing directory, filesystem browsing
+    # and quick-paths default to it instead of $HOME.
+    WORKSPACE: str = ""
+    # Optional extra workspace roots. When WORKSPACE or any entry here points
+    # at an existing directory, every project_path accepted by the fs / git /
+    # terminal / harness APIs must resolve inside one of these roots.
+    # Empty (default) = unconstrained, backwards compatible self-hosted mode.
+    ALLOWED_ROOTS: List[str] = []
+    # Guardrail / DoS caps.
+    MAX_TOOL_OUTPUT_CHARS: int = 20_000
+    MAX_TERMINAL_OUTPUT_BYTES: int = 1 * 1024 * 1024
+    MAX_TERMINAL_TIMEOUT_SECONDS: float = 120.0
+    MAX_PTYS: int = 8
+    PREVIEW_MAX_BODY_BYTES: int = 10 * 1024 * 1024
+    ARTIFACT_MAX_COUNT: int = 500
+    # Per-route fixed-window rate limits (requests per minute per client IP).
+    RATE_LIMIT_DEFAULT_PER_MIN: int = 300
+    RATE_LIMIT_AUTH_PER_MIN: int = 30
+    RATE_LIMIT_TERMINAL_PER_MIN: int = 30
+    RATE_LIMIT_LLM_PER_MIN: int = 20
+    RATE_LIMIT_UPLOAD_PER_MIN: int = 20
+    RATE_LIMIT_PROXY_PER_MIN: int = 120
 
     # CORS configuration - default allows local frontend/mobile dev.
     # Never add "*" here: browsers would then let any site reach this backend.

@@ -922,7 +922,7 @@ def test_fs_binary_upload_and_download(tmp_path: Path):
     assert traversal.status_code == 400
 
 
-def test_fs_binary_upload_and_download(tmp_path: Path):
+def test_fs_binary_download_traversal_blocked(tmp_path: Path):
     nested = tmp_path / "assets"
     nested.mkdir()
     content = b"\x00\x01\xffWorkFromPhone\x00binary"
@@ -1215,7 +1215,6 @@ def test_top_processes_are_ranked_by_measured_cpu():
 
 from backend.services.preview_service import preview_registry  # noqa: E402
 from backend.services.preview_service import PreviewRegistry  # noqa: E402
-from backend.services import preview_service as preview_service_module  # noqa: E402
 
 
 @pytest.fixture
@@ -1547,6 +1546,31 @@ def test_web_search_endpoint():
     assert "query" in data
     assert "results" in data
     assert isinstance(data["results"], list)
+
+
+def test_search_rejects_client_supplied_searxng_url_targeting_metadata_ip():
+    from backend.services.search_service import search_service
+
+    with pytest.raises(ValueError):
+        asyncio.run(
+            search_service._search_searxng(
+                "fastapi python", 3, "http://169.254.169.254"
+            )
+        )
+
+
+def test_web_search_endpoint_falls_back_when_searxng_url_is_unsafe():
+    resp = client.post(
+        "/api/v1/search",
+        json={
+            "query": "fastapi python",
+            "limit": 3,
+            "searxng_url": "http://169.254.169.254",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["engine"] != "searxng"
 
 
 def test_docs_require_auth_when_access_token_is_set():

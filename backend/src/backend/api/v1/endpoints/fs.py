@@ -26,8 +26,19 @@ from backend.services.fs_service import fs_service
 router = APIRouter(prefix="/fs", tags=["FileSystem"])
 
 
+def _resolve_project_root_or_403(project_path: str) -> Path:
+    from backend.core.security import resolve_project_root
+
+    try:
+        resolved = resolve_project_root(project_path)
+        assert isinstance(resolved, Path)
+        return resolved
+    except ValueError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+
+
 def _resolve_project_target(project_path: str, relative_path: str) -> tuple[Path, Path]:
-    project_root = Path(os.path.expanduser(project_path)).resolve()
+    project_root = _resolve_project_root_or_403(project_path)
     target = (project_root / relative_path).resolve()
     try:
         target.relative_to(project_root)
@@ -69,6 +80,8 @@ async def list_project_files(
         return fs_service.list_project_files(project_path, limit)
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
 
 
 @router.get("/file", summary="Read File Content")
@@ -79,9 +92,19 @@ async def read_file(
     end_line: Optional[int] = Query(None),
 ):
     try:
-        p_root = Path(os.path.expanduser(project_path)).resolve()
-        target = (p_root / relative_path).resolve()
-        target.relative_to(p_root)
+        _, target = _resolve_project_target(project_path, relative_path)
+        # Cap reads at 2 MiB to avoid loading multi-GB logs into memory.
+        if target.exists() and target.is_file():
+            try:
+                if target.stat().st_size > 2 * 1024 * 1024:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="File exceeds the 2 MiB read limit; use start_line/end_line paging",
+                    )
+            except HTTPException:
+                raise
+            except OSError:
+                pass
 
         if not target.exists() or not target.is_file():
             raise HTTPException(status_code=404, detail=f"File '{relative_path}' not found")
@@ -113,10 +136,7 @@ async def read_file(
 @router.post("/file", response_model=FileActionResponse, summary="Save/Write File Content")
 async def write_file(req: WriteFileRequest) -> FileActionResponse:
     try:
-        p_root = Path(os.path.expanduser(req.project_path)).resolve()
-        target = (p_root / req.relative_path).resolve()
-        target.relative_to(p_root)
-
+        p_root, target = _resolve_project_target(req.project_path, req.relative_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         with open(target, "w", encoding="utf-8") as f:
             f.write(req.content)
@@ -155,6 +175,11 @@ async def upload_files(
         raise HTTPException(status_code=404, detail="Upload directory not found")
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided")
+    if len(files) > settings.MAX_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many files: limit is {settings.MAX_UPLOAD_FILES} per request",
+        )
 
     targets: list[tuple[UploadFile, Path, str]] = []
     seen_names: set[str] = set()
@@ -183,6 +208,7 @@ async def upload_files(
         targets.append((upload, target, filename))
 
     uploaded: list[FileActionResponse] = []
+    total_bytes = 0
     for upload, target, filename in targets:
         temporary = target.with_name(f".{filename}.{uuid4().hex}.upload")
         size = 0
@@ -190,12 +216,21 @@ async def upload_files(
             with temporary.open("wb") as output:
                 while chunk := await upload.read(1024 * 1024):
                     size += len(chunk)
+                    total_bytes += len(chunk)
                     if size > settings.MAX_UPLOAD_BYTES:
                         raise HTTPException(
                             status_code=413,
                             detail=(
                                 f"{filename} exceeds the "
                                 f"{settings.MAX_UPLOAD_BYTES}-byte upload limit"
+                            ),
+                        )
+                    if total_bytes > settings.MAX_UPLOAD_TOTAL_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=(
+                                "Upload batch exceeds the "
+                                f"{settings.MAX_UPLOAD_TOTAL_BYTES}-byte total limit"
                             ),
                         )
                     output.write(chunk)
@@ -233,9 +268,7 @@ async def download_file(
 @router.post("/create", response_model=FileActionResponse, summary="Create File or Folder")
 async def create_item(req: CreateItemRequest) -> FileActionResponse:
     try:
-        p_root = Path(os.path.expanduser(req.project_path)).resolve()
-        target = (p_root / req.relative_path).resolve()
-        target.relative_to(p_root)
+        _, target = _resolve_project_target(req.project_path, req.relative_path)
 
         if req.is_dir:
             target.mkdir(parents=True, exist_ok=True)
@@ -267,9 +300,7 @@ async def create_item(req: CreateItemRequest) -> FileActionResponse:
 @router.delete("/file", response_model=FileActionResponse, summary="Delete File or Folder")
 async def delete_item(req: DeleteItemRequest) -> FileActionResponse:
     try:
-        p_root = Path(os.path.expanduser(req.project_path)).resolve()
-        target = (p_root / req.relative_path).resolve()
-        target.relative_to(p_root)
+        p_root, target = _resolve_project_target(req.project_path, req.relative_path)
 
         if not target.exists():
             raise HTTPException(status_code=404, detail="File or directory does not exist")

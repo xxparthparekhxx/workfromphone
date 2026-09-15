@@ -75,14 +75,18 @@ class SystemService:
         try:
             release = platform.freedesktop_os_release()
             return release.get("PRETTY_NAME") or release.get("NAME") or platform.system()
-        except OSError:
+        except (OSError, ValueError, KeyError):
             return platform.platform()
 
     @staticmethod
     def _disks() -> list[DiskMetrics]:
         disks: list[DiskMetrics] = []
         seen_mountpoints: set[str] = set()
-        for partition in psutil.disk_partitions(all=False):
+        try:
+            partitions = psutil.disk_partitions(all=False)
+        except Exception:
+            return []
+        for partition in partitions:
             if (
                 partition.mountpoint in seen_mountpoints
                 or partition.fstype.lower() in _IGNORED_FILESYSTEMS
@@ -108,10 +112,21 @@ class SystemService:
 
     @staticmethod
     def _network_interfaces() -> list[NetworkInterfaceMetrics]:
-        addresses = psutil.net_if_addrs()
-        stats = psutil.net_if_stats()
-        counters = psutil.net_io_counters(pernic=True)
+        try:
+            addresses = psutil.net_if_addrs()
+        except Exception:
+            return []
+        try:
+            stats = psutil.net_if_stats()
+        except Exception:
+            stats = {}
+        try:
+            counters = psutil.net_io_counters(pernic=True)
+        except Exception:
+            counters = {}
         result: list[NetworkInterfaceMetrics] = []
+        counters = counters or {}
+        stats = stats or {}
         for name in sorted(set(addresses) | set(stats)):
             interface_addresses = [
                 address.address
@@ -134,9 +149,13 @@ class SystemService:
 
     @staticmethod
     def _temperatures() -> list[TemperatureMetric]:
+        # Absent sensors (phones, minimal containers, proot) are normal:
+        # omit them instead of failing the whole snapshot.
         try:
             sensors = psutil.sensors_temperatures(fahrenheit=False)
-        except (AttributeError, OSError):
+        except (AttributeError, OSError, NotImplementedError):
+            return []
+        except Exception:
             return []
 
         temperatures: list[TemperatureMetric] = []
@@ -154,22 +173,29 @@ class SystemService:
         return temperatures
 
     def _top_processes(self, limit: int = 8) -> list[ProcessMetric]:
-        if not self._processes_primed:
-            # A process's first cpu_percent() reading is always 0.0, because
-            # there is no earlier sample to measure against. Without priming,
-            # the first snapshot ranks every process at 0% and the "top by
-            # CPU" list degenerates into an arbitrary order. psutil keeps its
-            # Process objects cached between process_iter() calls, so one
-            # throwaway pass plus a short gap gives real numbers from the
-            # first snapshot onwards.
-            for _ in psutil.process_iter(["cpu_percent"]):
-                pass
-            time.sleep(0.1)
-            self._processes_primed = True
+        try:
+            if not self._processes_primed:
+                # A process's first cpu_percent() reading is always 0.0, because
+                # there is no earlier sample to measure against. Without priming,
+                # the first snapshot ranks every process at 0% and the "top by
+                # CPU" list degenerates into an arbitrary order. psutil keeps its
+                # Process objects cached between process_iter() calls, so one
+                # throwaway pass plus a short gap gives real numbers from the
+                # first snapshot onwards.
+                for _ in psutil.process_iter(["cpu_percent"]):
+                    pass
+                time.sleep(0.1)
+                self._processes_primed = True
+        except Exception:
+            return []
 
         processes: list[ProcessMetric] = []
         attributes = ["pid", "name", "status", "cpu_percent", "memory_percent", "memory_info"]
-        for process in psutil.process_iter(attributes):
+        try:
+            process_iter = list(psutil.process_iter(attributes))
+        except Exception:
+            return []
+        for process in process_iter:
             try:
                 info = process.info
                 processes.append(
@@ -224,6 +250,12 @@ class SystemService:
                 )
         except (FileNotFoundError, subprocess.SubprocessError, ValueError):
             gpus = []
+        except (OSError, NotImplementedError):
+            # No GPU tooling / sensors in this runtime (e.g. phone proot):
+            # omit GPUs instead of failing the snapshot.
+            gpus = []
+        except Exception:
+            gpus = []
         self._gpu_cache = (now, gpus)
         return gpus
 
@@ -237,8 +269,14 @@ class SystemService:
                 else None
             )
 
-            disk_io = psutil.disk_io_counters()
-            net_io = psutil.net_io_counters()
+            try:
+                disk_io = psutil.disk_io_counters()
+            except Exception:
+                disk_io = None
+            try:
+                net_io = psutil.net_io_counters()
+            except Exception:
+                net_io = None
             disk_read = disk_io.read_bytes if disk_io else 0
             disk_write = disk_io.write_bytes if disk_io else 0
             net_sent = net_io.bytes_sent if net_io else 0
@@ -265,16 +303,70 @@ class SystemService:
             self._last_net_sent = net_sent
             self._last_net_received = net_received
 
-            virtual_memory = psutil.virtual_memory()
-            swap = psutil.swap_memory()
-            frequency = psutil.cpu_freq()
-            load_1m, load_5m, load_15m = os.getloadavg()
-            boot_time = datetime.fromtimestamp(psutil.boot_time(), timezone.utc)
+            try:
+                virtual_memory = psutil.virtual_memory()
+            except Exception:
+                # Constrained runtimes (proot without full /proc) may not
+                # expose memory counters; fall back to zeros so the snapshot
+                # shape stays stable for clients.
+                from collections import namedtuple as _namedtuple
+
+                _vm = _namedtuple(
+                    "svmem", ["total", "available", "used", "percent", "cached"]
+                )
+                virtual_memory = _vm(0, 0, 0, 0, 0)
+            try:
+                swap = psutil.swap_memory()
+            except Exception:
+                from collections import namedtuple as _namedtuple
+
+                _swap = _namedtuple("sswap", ["total", "used", "percent"])
+                swap = _swap(0, 0, 0)
+            try:
+                frequency = psutil.cpu_freq()
+            except (NotImplementedError, AttributeError, OSError):
+                frequency = None
+            except Exception:
+                frequency = None
+            try:
+                load_1m, load_5m, load_15m = os.getloadavg()
+            except (OSError, NotImplementedError):
+                load_1m, load_5m, load_15m = 0.0, 0.0, 0.0
+            try:
+                boot_time = datetime.fromtimestamp(psutil.boot_time(), timezone.utc)
+            except Exception:
+                boot_time = now
+            try:
+                cpu_usage = float(psutil.cpu_percent(interval=None))
+            except Exception:
+                cpu_usage = 0.0
+            try:
+                per_core = [float(v) for v in psutil.cpu_percent(interval=None, percpu=True)]
+            except Exception:
+                per_core = []
             backend = psutil.Process()
             try:
                 open_files = len(backend.open_files())
             except (psutil.AccessDenied, NotImplementedError):
                 open_files = None
+            except Exception:
+                open_files = None
+            try:
+                backend_cpu = float(backend.cpu_percent(interval=None))
+            except Exception:
+                backend_cpu = 0.0
+            try:
+                backend_mem = float(backend.memory_percent())
+            except Exception:
+                backend_mem = 0.0
+            try:
+                backend_rss = int(backend.memory_info().rss)
+            except Exception:
+                backend_rss = 0
+            try:
+                backend_threads = int(backend.num_threads())
+            except Exception:
+                backend_threads = 0
 
             return SystemSnapshot(
                 timestamp=now,
@@ -288,8 +380,8 @@ class SystemService:
                     uptime_seconds=max(0.0, now.timestamp() - boot_time.timestamp()),
                 ),
                 cpu=CpuMetrics(
-                    usage_percent=psutil.cpu_percent(interval=None),
-                    per_core_percent=psutil.cpu_percent(interval=None, percpu=True),
+                    usage_percent=cpu_usage,
+                    per_core_percent=per_core,
                     logical_cores=psutil.cpu_count(logical=True) or 0,
                     physical_cores=psutil.cpu_count(logical=False),
                     frequency_mhz=frequency.current if frequency else None,
@@ -326,10 +418,10 @@ class SystemService:
                 top_processes=self._top_processes(),
                 backend_process=BackendProcessMetrics(
                     pid=backend.pid,
-                    cpu_percent=backend.cpu_percent(interval=None),
-                    memory_percent=backend.memory_percent(),
-                    resident_bytes=backend.memory_info().rss,
-                    threads=backend.num_threads(),
+                    cpu_percent=backend_cpu,
+                    memory_percent=backend_mem,
+                    resident_bytes=backend_rss,
+                    threads=backend_threads,
                     open_files=open_files,
                 ),
                 gpus=self._gpus(now_monotonic),

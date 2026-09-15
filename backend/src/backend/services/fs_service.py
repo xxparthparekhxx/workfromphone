@@ -1,5 +1,5 @@
+import contextlib
 import os
-import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -28,7 +28,54 @@ _IGNORED_PROJECT_DIRECTORIES = {
 
 class FSService:
     @staticmethod
+    def workspace_roots() -> list[Path]:
+        from backend.core.security import workspace_roots as _roots
+
+        out: list[Path] = []
+        for root in _roots():
+            with contextlib.suppress(Exception):
+                resolved = Path(root).resolve()
+                if resolved.is_dir():
+                    out.append(resolved)
+        return out
+
+    @staticmethod
+    def _enforce_workspace(resolved: Path) -> Path:
+        """Clamp ``resolved`` into the workspace allowlist when configured."""
+        roots = FSService.workspace_roots()
+        if not roots:
+            return resolved
+        for root in roots:
+            with contextlib.suppress(ValueError):
+                resolved.relative_to(root)
+                return resolved
+        return roots[0]
+
+    @staticmethod
+    def resolve_root(project_path: str) -> Path:
+        from backend.core.security import resolve_project_root
+
+        resolved = resolve_project_root(project_path)
+        assert isinstance(resolved, Path)
+        if not resolved.exists() or not resolved.is_dir():
+            raise FileNotFoundError("Project directory not found")
+        return resolved
+
+    @staticmethod
     def get_home_dir() -> Path:
+        # Constrained runtimes (Android proot, containers) export WORKSPACE
+        # to pin the file browser at the bind-mounted workspace instead of
+        # $HOME.
+        roots = FSService.workspace_roots()
+        if roots:
+            return roots[0]
+        workspace = os.environ.get("WORKSPACE", "").strip()
+        if workspace:
+            candidate = Path(os.path.expanduser(workspace))
+            with contextlib.suppress(Exception):
+                resolved = candidate.resolve()
+                if resolved.is_dir():
+                    return resolved
         return Path.home().resolve()
 
     @staticmethod
@@ -65,6 +112,8 @@ class FSService:
         else:
             target_path = Path(os.path.expanduser(target_path_str)).resolve()
 
+        # Workspace allowlist: never let browse escape to /etc, /root, ...
+        target_path = cls._enforce_workspace(target_path)
         if not target_path.exists() or not target_path.is_dir():
             target_path = home
 
@@ -167,6 +216,7 @@ class FSService:
         home = cls.get_home_dir()
         current_workspace = str(Path.cwd().resolve())
 
+        workspace_env = os.environ.get("WORKSPACE", "").strip()
         common_candidates = [
             home / "code",
             home / "Projects",
@@ -175,6 +225,11 @@ class FSService:
             home / "Documents",
             Path(current_workspace),
         ]
+        if workspace_env:
+            with contextlib.suppress(Exception):
+                workspace_path = Path(os.path.expanduser(workspace_env)).resolve()
+                if workspace_path.is_dir():
+                    common_candidates.insert(0, workspace_path)
 
         quick_items: List[DirectoryItem] = []
         seen = set()
@@ -201,9 +256,7 @@ class FSService:
 
     @staticmethod
     def list_project_files(project_path: str, limit: int) -> ProjectFilesResponse:
-        project_root = Path(os.path.expanduser(project_path)).resolve()
-        if not project_root.exists() or not project_root.is_dir():
-            raise FileNotFoundError("Project directory not found")
+        project_root = FSService.resolve_root(project_path)
 
         files: list[str] = []
         for current_root, directories, filenames in os.walk(project_root):

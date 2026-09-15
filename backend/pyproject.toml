@@ -26,4 +26,24 @@ dev = [
     "httpx>=0.28.1",
     "pyinstaller>=6.22.2",
     "pytest>=9.1.1",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.16.7",
 ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+# E501 (line length) is grandfathered: the existing codebase has many long
+# lines. New code should still stay near 120 cols. F/E gate real bugs.
+select = ["E", "F"]
+ignore = ["E501"]
+
+[tool.coverage.run]
+source = ["src/backend"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+fail_under = 55
+show_missing = true

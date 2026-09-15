@@ -20,6 +20,13 @@ router = APIRouter(prefix="/git", tags=["Git Source Control"])
 async def get_status(project_path: str = Query(..., description="Project root directory")):
     try:
         return await git_service.get_status(project_path)
+    except ValueError as exc:
+        msg = str(exc)
+        if "workspace allowlist" in msg:
+            raise HTTPException(status_code=403, detail=msg) from exc
+        if "does not exist" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
     except Exception:
         raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
 
@@ -32,6 +39,13 @@ async def get_diff(
 ):
     try:
         return await git_service.get_diff(project_path, relative_path=relative_path, staged=staged)
+    except ValueError as exc:
+        msg = str(exc)
+        if "workspace allowlist" in msg:
+            raise HTTPException(status_code=403, detail=msg) from exc
+        if "does not exist" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
     except Exception:
         raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
 
@@ -40,6 +54,13 @@ async def get_diff(
 async def stage_files(req: GitStageRequest):
     try:
         return await git_service.stage_files(req.project_path, req.paths)
+    except ValueError as exc:
+        msg = str(exc)
+        if "workspace allowlist" in msg:
+            raise HTTPException(status_code=403, detail=msg) from exc
+        if "does not exist" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
     except Exception:
         raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
 
@@ -48,6 +69,13 @@ async def stage_files(req: GitStageRequest):
 async def unstage_files(req: GitUnstageRequest):
     try:
         return await git_service.unstage_files(req.project_path, req.paths)
+    except ValueError as exc:
+        msg = str(exc)
+        if "workspace allowlist" in msg:
+            raise HTTPException(status_code=403, detail=msg) from exc
+        if "does not exist" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
     except Exception:
         raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
 
@@ -56,6 +84,13 @@ async def unstage_files(req: GitUnstageRequest):
 async def discard_changes(req: GitDiscardRequest):
     try:
         return await git_service.discard_changes(req.project_path, req.paths)
+    except ValueError as exc:
+        msg = str(exc)
+        if "workspace allowlist" in msg:
+            raise HTTPException(status_code=403, detail=msg) from exc
+        if "does not exist" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
     except Exception:
         raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
 
@@ -64,6 +99,13 @@ async def discard_changes(req: GitDiscardRequest):
 async def commit(req: GitCommitRequest):
     try:
         return await git_service.commit(req)
+    except ValueError as exc:
+        msg = str(exc)
+        if "workspace allowlist" in msg:
+            raise HTTPException(status_code=403, detail=msg) from exc
+        if "does not exist" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
     except Exception:
         raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
 
@@ -72,6 +114,13 @@ async def commit(req: GitCommitRequest):
 async def push(project_path: str = Query(..., description="Project root directory")):
     try:
         return await git_service.push(project_path)
+    except ValueError as exc:
+        msg = str(exc)
+        if "workspace allowlist" in msg:
+            raise HTTPException(status_code=403, detail=msg) from exc
+        if "does not exist" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
     except Exception:
         raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
 
@@ -80,6 +129,13 @@ async def push(project_path: str = Query(..., description="Project root director
 async def pull(project_path: str = Query(..., description="Project root directory")):
     try:
         return await git_service.pull(project_path)
+    except ValueError as exc:
+        msg = str(exc)
+        if "workspace allowlist" in msg:
+            raise HTTPException(status_code=403, detail=msg) from exc
+        if "does not exist" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
     except Exception:
         raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
 
@@ -88,5 +144,12 @@ async def pull(project_path: str = Query(..., description="Project root director
 async def get_branches(project_path: str = Query(..., description="Project root directory")):
     try:
         return await git_service.get_branches(project_path)
+    except ValueError as exc:
+        msg = str(exc)
+        if "workspace allowlist" in msg:
+            raise HTTPException(status_code=403, detail=msg) from exc
+        if "does not exist" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
     except Exception:
         raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)

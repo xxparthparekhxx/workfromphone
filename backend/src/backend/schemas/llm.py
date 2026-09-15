@@ -16,7 +16,7 @@ class LLMConfig(BaseModel):
         description="Model ID (e.g. anthropic/claude-3.5-sonnet, openai/gpt-4o, deepseek/deepseek-chat)",
     )
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
-    max_tokens: Optional[int] = Field(default=4096)
+    max_tokens: Optional[int] = Field(default=4096, ge=1, le=128_000)
 
 
 class ChatMessage(BaseModel):
@@ -29,13 +29,13 @@ class ChatMessage(BaseModel):
 
 class ChatTaskRequest(BaseModel):
     project_path: str = Field(description="Target project directory root on host PC")
-    messages: List[ChatMessage] = Field(description="Conversation message history")
+    messages: List[ChatMessage] = Field(description="Conversation message history", max_length=200)
     llm_config: LLMConfig = Field(description="LLM provider and model configuration")
-    max_steps: Optional[int] = Field(
+    max_steps: int = Field(
         default=50,
         ge=1,
         le=200,
-        description="Max agentic tool-calling turns. Defaults to 50.",
+        description="Max agentic tool-calling turns. Defaults to 50, capped at 200.",
     )
 
 

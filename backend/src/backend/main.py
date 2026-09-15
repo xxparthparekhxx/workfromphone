@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import contextlib
 import html
 import hmac
 import ipaddress
@@ -46,8 +47,85 @@ def verify_network_exposure() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print(f"🚀 Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+    if not settings.ACCESS_TOKEN:
+        print(
+            "⚠️  ACCESS_TOKEN is not set: every capability route (files, git, "
+            "terminal, LLM) accepts any local connection. This is only safe "
+            "while bound to loopback with no port forwarding (no `ssh -R`, no "
+            "Cloudflare Tunnel pointing at it). Set ACCESS_TOKEN for any "
+            "forwarded or shared setup."
+        )
+    if workspace_roots_snapshot():
+        print(f"📁 Workspace allowlist: {', '.join(workspace_roots_snapshot())}")
     yield
     print(f"🛑 Shutting down {settings.APP_NAME}")
+    with contextlib.suppress(Exception):
+        from backend.api.v1.endpoints import preview as _preview_ep
+
+        client = _preview_ep._shared_preview_client
+        if client is not None:
+            await client.aclose()
+        _preview_ep._shared_preview_client = None
+
+
+def workspace_roots_snapshot() -> list[str]:
+    try:
+        from backend.core.security import workspace_roots
+
+        return workspace_roots()
+    except Exception:
+        return []
+
+
+class RateLimitMiddleware:
+    """Fixed-window per-IP rate limits (brute-force / DoS backstop).
+
+    Buckets are deliberately generous so normal single-user operation never
+    trips them; they exist to blunt bearer-token brute force, terminal/run
+    abuse, LLM loop spam, upload floods and proxy hammering.
+    """
+
+    def __init__(self, app) -> None:
+        from backend.core.security import RateLimiter as _RL
+
+        self.app = app
+        self._limiters = {
+            "default": _RL(limit=settings.RATE_LIMIT_DEFAULT_PER_MIN, window_seconds=60.0),
+            "terminal": _RL(limit=settings.RATE_LIMIT_TERMINAL_PER_MIN, window_seconds=60.0),
+            "llm": _RL(limit=settings.RATE_LIMIT_LLM_PER_MIN, window_seconds=60.0),
+            "upload": _RL(limit=settings.RATE_LIMIT_UPLOAD_PER_MIN, window_seconds=60.0),
+            "proxy": _RL(limit=settings.RATE_LIMIT_PROXY_PER_MIN, window_seconds=60.0),
+        }
+
+    def _bucket(self, path: str) -> str:
+        if path.startswith(f"{settings.API_V1_PREFIX}/terminal/"):
+            return "terminal"
+        if path.startswith(f"{settings.API_V1_PREFIX}/llm/"):
+            return "llm"
+        if path.startswith(f"{settings.API_V1_PREFIX}/fs/upload"):
+            return "upload"
+        if path.startswith(f"{settings.API_V1_PREFIX}/preview/proxy/"):
+            return "proxy"
+        return "default"
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] not in {"http", "websocket"}:
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        bucket = self._bucket(path)
+        client = scope.get("client")
+        ip = client[0] if isinstance(client, (list, tuple)) and client else "unknown"
+        if not self._limiters[bucket].allowed(f"{ip}:{bucket}"):
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 4429, "reason": "Rate limit exceeded"})
+                return
+            from starlette.responses import JSONResponse as _JSON
+
+            response = _JSON({"detail": "Rate limit exceeded. Try again later."}, status_code=429)
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
 
 
 def create_app() -> FastAPI:
@@ -65,6 +143,7 @@ def create_app() -> FastAPI:
     )
 
     application.add_middleware(BearerTokenMiddleware)
+    application.add_middleware(RateLimitMiddleware)
 
     # Configure CORS
     application.add_middleware(
@@ -129,7 +208,7 @@ def create_app() -> FastAPI:
             button{{width:100%;padding:12px;background:#7aa2f7;border:none;color:#1a1b26;border-radius:8px;font-weight:bold;font-size:15px;cursor:pointer;}}</style></head>
             <body><div class="card"><h3>Protected Artifact</h3><p style="color:#a9b1d6;font-size:14px;">{title_escaped}</p>
             <p style="color:#a9b1d6;font-size:13px;">{html.escape(message)}</p>
-            <form method="POST" action=""><input type="password" name="pin" inputmode="numeric" autocomplete="off" placeholder="Enter PIN" autofocus required />
+            <form method="POST" action=""><label class="sr-only" for="pin">PIN code</label><input id="pin" type="password" name="pin" inputmode="numeric" autocomplete="off" placeholder="Enter PIN" aria-label="Artifact PIN code" autofocus required />
             <button type="submit">Unlock & View</button></form></div></body></html>""",
             headers={"X-Robots-Tag": "noindex, nofollow, noarchive, nosnippet"},
         )
@@ -171,8 +250,9 @@ def create_app() -> FastAPI:
         if not artifact:
             return _artifact_not_found()
 
-        client = request.client.host if request.client else "unknown"
-        limit_key = f"{token}:{client}"
+        # Key the PIN limiter by token alone (not token:IP): per-IP keys let an
+        # attacker rotate source addresses to bypass the 5-attempt window.
+        limit_key = f"pin:{token}"
         requires_pin = bool(
             artifact.get("pin_hash") or artifact.get("pin_code")
         )

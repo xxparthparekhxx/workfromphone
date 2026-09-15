@@ -40,6 +40,9 @@ async def terminate_process_group(process: asyncio.subprocess.Process) -> None:
 class TerminalService:
     _DEFAULT_COLS = 80
     _DEFAULT_ROWS = 24
+    _MAX_INPUT_BYTES = 64 * 1024
+    _IDLE_TIMEOUT_SECONDS = 10 * 60
+    _active_ptys = 0
     _PTY_SHELL_BOOTSTRAP = (
         "import fcntl, os, sys, termios;"
         "os.setsid();"
@@ -82,14 +85,36 @@ class TerminalService:
 
     @staticmethod
     def _resolve_shell() -> str:
+        # Preferred shell first; minimal rootfs images (proot on Android)
+        # may only ship /bin/sh, so fall back instead of failing outright.
+        candidates = []
         configured_shell = os.environ.get("SHELL", "")
-        if configured_shell and Path(configured_shell).is_file() and os.access(configured_shell, os.X_OK):
-            return configured_shell
-        return "/bin/bash"
+        if configured_shell:
+            candidates.append(configured_shell)
+        candidates.extend(["/bin/bash", "/bin/sh"])
+        for candidate in candidates:
+            if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK):
+                return candidate
+        return "/bin/sh"
 
     @classmethod
     async def run_command(cls, req: TerminalRunRequest) -> TerminalRunResponse:
-        project_root = Path(os.path.expanduser(req.project_path)).resolve()
+        from backend.core.config import settings as _settings
+        from backend.core.security import resolve_project_root as _resolve_root
+
+        try:
+            resolved = _resolve_root(req.project_path)
+            assert isinstance(resolved, Path)
+            project_root = resolved
+        except ValueError as exc:
+            return TerminalRunResponse(
+                command=req.command,
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                duration_ms=0,
+                timed_out=False,
+            )
         if not project_root.exists() or not project_root.is_dir():
             return TerminalRunResponse(
                 command=req.command,
@@ -100,6 +125,8 @@ class TerminalService:
                 timed_out=False,
             )
 
+        timeout = min(float(req.timeout_seconds), float(_settings.MAX_TERMINAL_TIMEOUT_SECONDS))
+        max_bytes = int(_settings.MAX_TERMINAL_OUTPUT_BYTES)
         start_time = time.time()
         process = await asyncio.create_subprocess_shell(
             req.command,
@@ -108,22 +135,33 @@ class TerminalService:
             stderr=asyncio.subprocess.PIPE,
             env=cls._get_process_env(),
             start_new_session=True,
+            limit=max(64 * 1024, min(max_bytes, 4 * 1024 * 1024)),
         )
 
         timed_out = False
+        truncated = False
         try:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(),
-                timeout=req.timeout_seconds,
+                timeout=timeout,
             )
+            # Cap buffered output (e.g. `cat /dev/zero`) instead of OOMing.
+            if len(stdout) > max_bytes:
+                stdout = stdout[:max_bytes]
+                truncated = True
+            if len(stderr) > max_bytes:
+                stderr = stderr[:max_bytes]
+                truncated = True
             out_str = stdout.decode("utf-8", errors="replace")
             err_str = stderr.decode("utf-8", errors="replace")
+            if truncated:
+                err_str += f"\n[Output truncated at {max_bytes} bytes]"
             exit_code = process.returncode if process.returncode is not None else 0
         except asyncio.TimeoutError:
             await terminate_process_group(process)
             timed_out = True
             out_str = ""
-            err_str = f"Command timed out after {req.timeout_seconds} seconds."
+            err_str = f"Command timed out after {timeout} seconds."
             exit_code = -1
 
         duration_ms = int((time.time() - start_time) * 1000)
@@ -140,7 +178,17 @@ class TerminalService:
     @classmethod
     async def handle_websocket(cls, websocket: WebSocket, project_path: str):
         await websocket.accept()
-        project_root = Path(os.path.expanduser(project_path)).resolve()
+        from backend.core.config import settings as _settings
+        from backend.core.security import resolve_project_root as _resolve_root
+
+        try:
+            resolved = _resolve_root(project_path)
+            assert isinstance(resolved, Path)
+            project_root = resolved
+        except ValueError as exc:
+            await websocket.send_json({"type": "error", "error": str(exc)})
+            await websocket.close()
+            return
 
         if not project_root.exists() or not project_root.is_dir():
             await websocket.send_json({
@@ -149,6 +197,16 @@ class TerminalService:
             })
             await websocket.close()
             return
+
+        if cls._active_ptys >= int(_settings.MAX_PTYS):
+            await websocket.send_json({
+                "type": "error",
+                "error": f"Too many interactive terminals (limit {_settings.MAX_PTYS}). Close one and retry.",
+            })
+            await websocket.close()
+            return
+        cls._active_ptys += 1
+        last_activity = time.monotonic()
 
         master_fd: int | None = None
         process: asyncio.subprocess.Process | None = None
@@ -175,9 +233,21 @@ class TerminalService:
                 await websocket.send_json({"type": "output", "data": remaining})
 
         async def receive_input() -> None:
+            nonlocal last_activity
             assert master_fd is not None
             while True:
-                msg_text = await websocket.receive_text()
+                if time.monotonic() - last_activity > cls._IDLE_TIMEOUT_SECONDS:
+                    with contextlib.suppress(Exception):
+                        await websocket.send_json({
+                            "type": "error",
+                            "error": "Terminal closed after 10 minutes of inactivity.",
+                        })
+                    break
+                try:
+                    msg_text = await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
+                except asyncio.TimeoutError:
+                    continue
+                last_activity = time.monotonic()
                 try:
                     msg = json.loads(msg_text)
                 except (TypeError, json.JSONDecodeError):
@@ -187,7 +257,16 @@ class TerminalService:
                 if msg_type == "input":
                     data = msg.get("data")
                     if isinstance(data, str) and data:
-                        os.write(master_fd, data.encode("utf-8"))
+                        encoded = data.encode("utf-8")
+                        if len(encoded) > cls._MAX_INPUT_BYTES:
+                            with contextlib.suppress(Exception):
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "error": f"Input exceeds the {cls._MAX_INPUT_BYTES}-byte limit and was dropped.",
+                                })
+                            continue
+                        # Never block the event loop on a full pty buffer.
+                        await asyncio.to_thread(os.write, master_fd, encoded)
                 elif msg_type == "resize":
                     cols = msg.get("cols")
                     rows = msg.get("rows")
@@ -206,7 +285,21 @@ class TerminalService:
                     )
 
         try:
-            master_fd, slave_fd = pty.openpty()
+            try:
+                master_fd, slave_fd = pty.openpty()
+            except OSError as exc:
+                # proot on Android may not provide /dev/pts. Report a
+                # structured error instead of dropping the connection.
+                await websocket.send_json({
+                    "type": "error",
+                    "error": (
+                        "Interactive terminal is unavailable in this runtime "
+                        f"(no PTY device: {exc}). Non-interactive commands "
+                        "via POST /api/v1/terminal/run still work."
+                    ),
+                })
+                await websocket.close()
+                return
             cls._set_pty_size(master_fd, cls._DEFAULT_COLS, cls._DEFAULT_ROWS)
 
             shell = cls._resolve_shell()
@@ -257,6 +350,7 @@ class TerminalService:
             with contextlib.suppress(Exception):
                 await websocket.send_json({"type": "error", "error": str(exc)})
         finally:
+            cls._active_ptys = max(0, cls._active_ptys - 1)
             if process is not None:
                 await terminate_process_group(process)
             if master_fd is not None:

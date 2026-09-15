@@ -16,7 +16,10 @@ from backend.schemas.git import (
 class GitService:
     @staticmethod
     def _get_project_root(project_path_str: str) -> Path:
-        resolved = Path(os.path.expanduser(project_path_str)).resolve()
+        from backend.core.security import resolve_project_root
+
+        resolved = resolve_project_root(project_path_str)
+        assert isinstance(resolved, Path)
         if not resolved.exists() or not resolved.is_dir():
             raise ValueError(f"Project directory '{project_path_str}' does not exist.")
         return resolved
@@ -215,8 +218,8 @@ class GitService:
                             f"+++ b/{rel_clean}",
                             "@@ -0,0 +1," + str(len(content.splitlines())) + " @@",
                         ]
-                        for l in content.splitlines():
-                            diff_lines.append("+" + l)
+                        for text_line in content.splitlines():
+                            diff_lines.append("+" + text_line)
                         diff_out = "\n".join(diff_lines)
                     except Exception:
                         pass

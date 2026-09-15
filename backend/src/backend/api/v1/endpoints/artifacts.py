@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from backend.schemas.artifacts import (
     ArtifactMetadata,
@@ -14,7 +14,10 @@ router = APIRouter(prefix="/artifacts", tags=["Artifacts & Sharing"])
 @router.post("/publish", response_model=PublishArtifactResponse, summary="Publish and share an artifact")
 async def publish_artifact(req: PublishArtifactRequest, request: Request) -> PublishArtifactResponse:
     base_url = str(request.base_url).rstrip("/")
-    return artifact_service.publish_artifact(req, base_url=base_url)
+    try:
+        return artifact_service.publish_artifact(req, base_url=base_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
 
 
 @router.get("", response_model=List[ArtifactMetadata], summary="List published artifacts")
