@@ -65,6 +65,20 @@ class RemoteSetupService {
     'WFP_BACKEND_RELEASE_REPO',
   );
 
+  /// Pinned cloudflared release (dart-define=CLOUDFLARED_VERSION=2025.x.y).
+  /// Defaults to `latest`. Cloudflare publishes no checksum manifest for the
+  /// standalone binary, so the installer verifies the download over TLS plus
+  /// size (>=5 MB) and ELF-magic checks instead of a hash comparison — see
+  /// _installCloudflared. Pin a version for reproducible installs.
+  static const cloudflaredVersion = String.fromEnvironment(
+    'CLOUDFLARED_VERSION',
+    defaultValue: 'latest',
+  );
+
+  /// Minimum acceptable cloudflared binary size (real releases are ~30 MB).
+  /// Anything smaller is a truncated download or an error page.
+  static const cloudflaredMinBytes = 5 * 1024 * 1024;
+
   Future<SSHClient> connectExisting(
     BackendProfile profile, {
     required String password,
@@ -319,9 +333,14 @@ exit 13
     final cloudflareArchitecture = architecture == 'aarch64'
         ? 'arm64'
         : 'amd64';
-    final downloadUrl =
-        'https://github.com/cloudflare/cloudflared/releases/latest/download/'
-        'cloudflared-linux-$cloudflareArchitecture';
+    final versionSegment = cloudflaredVersion.trim().isEmpty
+        ? 'latest'
+        : cloudflaredVersion.trim();
+    final downloadUrl = versionSegment == 'latest'
+        ? 'https://github.com/cloudflare/cloudflared/releases/latest/download/'
+              'cloudflared-linux-$cloudflareArchitecture'
+        : 'https://github.com/cloudflare/cloudflared/releases/download/'
+              '$versionSegment/cloudflared-linux-$cloudflareArchitecture';
     final script =
         '''
 set -eu
@@ -330,6 +349,19 @@ if command -v curl >/dev/null 2>&1; then
   curl -fsSL ${_shellEscape(downloadUrl)} -o "\$HOME/.local/bin/cloudflared"
 else
   wget -qO "\$HOME/.local/bin/cloudflared" ${_shellEscape(downloadUrl)}
+fi
+# Cloudflare ships no checksum manifest for this binary: verify over-TLS
+# download integrity via size + ELF magic instead of trusting blindly.
+size=\$(wc -c < "\$HOME/.local/bin/cloudflared")
+if [ "\$size" -lt $cloudflaredMinBytes ]; then
+  echo "cloudflared download failed integrity check (size \$size)" >&2
+  rm -f "\$HOME/.local/bin/cloudflared"
+  exit 14
+fi
+if ! head -c 4 "\$HOME/.local/bin/cloudflared" | od -An -tx1 | grep -q "7f 45 4c 46"; then
+  echo "cloudflared download failed integrity check (not an ELF binary)" >&2
+  rm -f "\$HOME/.local/bin/cloudflared"
+  exit 14
 fi
 chmod 700 "\$HOME/.local/bin/cloudflared"
 printf 'CLOUDFLARE_TUNNEL_TOKEN=%s\\n' ${_shellEscape(tunnelToken)} > "\$HOME/.config/workfromphone/cloudflared.env"

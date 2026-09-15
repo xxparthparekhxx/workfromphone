@@ -78,12 +78,31 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
     }
   }
 
+  /// Documented client limit: files larger than 2 MiB are refused in the
+  /// editor (the backend enforces the same cap with 413 + line paging).
+  static const maxEditorBytes = 2 * 1024 * 1024;
+
   Future<void> _openFile(String path) async {
     final relPath = path.startsWith(widget.project.path)
         ? path
               .substring(widget.project.path.length)
               .replaceFirst(RegExp(r'^/+'), '')
         : path;
+
+    final known = _items.where((item) => item.path == path).firstOrNull;
+    if (known?.sizeBytes != null && known!.sizeBytes! > maxEditorBytes) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'File exceeds the 2 MiB editor limit. Download it instead.',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
 
     setState(() {
       _isLoading = true;
@@ -95,6 +114,21 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
         projectPath: widget.project.path,
         relativePath: relPath,
       );
+
+      if (fileData.content.length > maxEditorBytes) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'File exceeds the 2 MiB editor limit. Download it instead.',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
 
       if (mounted) {
         setState(() {
@@ -522,6 +556,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                   ),
                 ),
                 IconButton(
+                  key: const Key('file-reset-button'),
                   icon: const Icon(CupertinoIcons.arrow_uturn_left, size: 18),
                   tooltip: 'Reset Changes',
                   onPressed: _isEditorDirty
@@ -535,6 +570,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                 ),
                 const SizedBox(width: 4),
                 FilledButton.icon(
+                  key: const Key('file-save-button'),
                   onPressed: _isSavingFile || !_isEditorDirty
                       ? null
                       : _saveCurrentFile,

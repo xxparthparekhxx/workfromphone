@@ -20,6 +20,8 @@ class SystemMonitorSession {
   Timer? _reconnectTimer;
   bool _shouldRun = false;
   int _generation = 0;
+  int _reconnectAttempts = 0;
+  bool _authFailed = false;
 
   SystemMonitorSession({
     required this.backendUrl,
@@ -44,6 +46,8 @@ class SystemMonitorSession {
   Future<void> start() async {
     if (_shouldRun) return;
     _shouldRun = true;
+    _authFailed = false;
+    _reconnectAttempts = 0;
     await _connect();
   }
 
@@ -67,6 +71,8 @@ class SystemMonitorSession {
           if (!_shouldRun || generation != _generation) return;
           try {
             final json = jsonDecode(message as String) as Map<String, dynamic>;
+            // A successful frame resets the backoff chain.
+            _reconnectAttempts = 0;
             onStateChange(SystemMonitorState.connected);
             onSnapshot(SystemSnapshot.fromJson(json));
           } catch (error) {
@@ -80,8 +86,7 @@ class SystemMonitorSession {
         },
         onDone: () {
           if (!_shouldRun || generation != _generation) return;
-          onStateChange(SystemMonitorState.disconnected);
-          _scheduleReconnect();
+          _handleDone();
         },
       );
       await channel.ready;
@@ -93,14 +98,45 @@ class SystemMonitorSession {
     }
   }
 
+  /// Exponential backoff with jitter (3s, 6s, 12s… capped at 30s). Stops
+  /// entirely after an auth rejection (4401/4403) — retrying a bad token in
+  /// a tight loop hammers the backend and never recovers.
   void _scheduleReconnect() {
-    if (!_shouldRun || _reconnectTimer?.isActive == true) return;
-    _reconnectTimer = Timer(const Duration(seconds: 3), _connect);
+    if (!_shouldRun || _authFailed || _reconnectTimer?.isActive == true) {
+      return;
+    }
+    _reconnectAttempts++;
+    final backoffSeconds = _reconnectAttempts <= 1
+        ? 3
+        : (3 * (1 << (_reconnectAttempts - 1))).clamp(3, 30);
+    _reconnectTimer = Timer(Duration(seconds: backoffSeconds), _connect);
+  }
+
+  /// Backend auth/origin rejections arrive as abnormal WS closes. Returns
+  /// true when the close code means "fix credentials, don't retry".
+  bool _isAuthClose(int? closeCode) => closeCode == 4401 || closeCode == 4403;
+
+  void _handleDone() {
+    final closeCode = _channel?.closeCode;
+    if (_isAuthClose(closeCode)) {
+      _authFailed = true;
+      _reconnectTimer?.cancel();
+      onStateChange(SystemMonitorState.disconnected);
+      onError(
+        closeCode == 4401
+            ? 'Metrics stream rejected: invalid or missing access token.'
+            : 'Metrics stream rejected: browser origin not allowed.',
+      );
+      return;
+    }
+    onStateChange(SystemMonitorState.disconnected);
+    _scheduleReconnect();
   }
 
   Future<void> stop() async {
     _shouldRun = false;
     _generation++;
+    _reconnectAttempts = 0;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     await _closeChannel();

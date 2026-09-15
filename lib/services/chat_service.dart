@@ -40,7 +40,7 @@ class ChatService {
     final payload = {
       'project_path': projectPath,
       'messages': messages.map((m) => m.toApiMessage()).toList(),
-      'llm_config': llmConfig.toJson(),
+      'llm_config': llmConfig.toApiJson(),
     };
     var receivedTerminalEvent = false;
 

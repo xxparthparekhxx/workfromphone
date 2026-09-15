@@ -48,16 +48,35 @@ class _RemoteBackendSetupScreenState extends State<RemoteBackendSetupScreen> {
   }
 
   bool get _looksPrivate {
-    final host = _hostController.text.trim();
-    final address = InternetAddress.tryParse(host);
-    if (address == null || address.type != InternetAddressType.IPv4) {
-      return host == 'localhost' || host.endsWith('.local');
+    final host = _hostController.text.trim().toLowerCase();
+    final address = InternetAddress.tryParse(_hostController.text.trim());
+    if (address != null) {
+      if (address.type == InternetAddressType.IPv6) {
+        // ::1 loopback, fc00::/7 unique-local, fe80::/10 link-local.
+        final raw = address.address.toLowerCase();
+        if (raw == '::1') return true;
+        final firstGroup = int.tryParse(
+          raw.split(':').firstWhere((g) => g.isNotEmpty, orElse: () => ''),
+          radix: 16,
+        );
+        if (firstGroup != null) {
+          if ((firstGroup & 0xfe00) == 0xfc00) return true; // ULA
+          if ((firstGroup & 0xffc0) == 0xfe80) return true; // link-local
+        }
+        return false;
+      }
+      final parts = address.address.split('.').map(int.parse).toList();
+      return parts[0] == 10 ||
+          parts[0] == 127 ||
+          (parts[0] == 192 && parts[1] == 168) ||
+          (parts[0] == 172 && parts[1] >= 16 && parts[1] <= 31);
     }
-    final parts = address.address.split('.').map(int.parse).toList();
-    return parts[0] == 10 ||
-        parts[0] == 127 ||
-        (parts[0] == 192 && parts[1] == 168) ||
-        (parts[0] == 172 && parts[1] >= 16 && parts[1] <= 31);
+    return host == 'localhost' ||
+        host == '::1' ||
+        host.endsWith('.local') ||
+        host.endsWith('.internal') ||
+        host.endsWith('.lan') ||
+        host.endsWith('.home.arpa');
   }
 
   Future<bool> _verifyHostKey(String type, String fingerprint) async {
@@ -75,46 +94,70 @@ class _RemoteBackendSetupScreenState extends State<RemoteBackendSetupScreen> {
     if (!mounted) return false;
 
     final changed = matching.isNotEmpty;
+    // Require an explicit "I verified" confirmation so the dialog cannot be
+    // click-through accepted without reading the fingerprint. Compare against
+    // `ssh-keygen -l -f /etc/ssh/ssh_host_*_key.pub` on the Linux host.
+    var verified = false;
     return await showDialog<bool>(
           context: context,
           barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            icon: Icon(
-              changed
-                  ? CupertinoIcons.exclamationmark_triangle
-                  : CupertinoIcons.lock,
-              color: changed ? Colors.orange : null,
-            ),
-            title: Text(changed ? 'SSH host key changed' : 'Trust this host?'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  changed
-                      ? 'The saved identity for this host does not match. '
-                            'Only continue if the server was reinstalled or its '
-                            'SSH keys were intentionally rotated.'
-                      : 'Confirm this fingerprint against the Linux host '
-                            'before continuing.',
+          builder: (context) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              icon: Icon(
+                changed
+                    ? CupertinoIcons.exclamationmark_triangle
+                    : CupertinoIcons.lock,
+                color: changed ? Colors.orange : null,
+              ),
+              title: Text(
+                changed ? 'SSH host key changed' : 'Trust this host?',
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    changed
+                        ? 'The saved identity for this host does not match. '
+                              'Only continue if the server was reinstalled or its '
+                              'SSH keys were intentionally rotated.'
+                        : 'Compare this fingerprint with the Linux host '
+                              '(`ssh-keygen -l -f /etc/ssh/ssh_host_*_key.pub`) '
+                              'before continuing.',
+                  ),
+                  const SizedBox(height: 14),
+                  SelectableText(
+                    '$type\n$fingerprint',
+                    style: const TextStyle(fontFamily: 'monospace'),
+                  ),
+                  const SizedBox(height: 8),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    title: const Text(
+                      'I verified this fingerprint on the host',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                    value: verified,
+                    onChanged: (value) =>
+                        setDialogState(() => verified = value ?? false),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
                 ),
-                const SizedBox(height: 14),
-                SelectableText(
-                  '$type\n$fingerprint',
-                  style: const TextStyle(fontFamily: 'monospace'),
+                FilledButton(
+                  onPressed: verified
+                      ? () => Navigator.pop(context, true)
+                      : null,
+                  child: Text(changed ? 'Trust new key' : 'Trust host'),
                 ),
               ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: Text(changed ? 'Trust new key' : 'Trust host'),
-              ),
-            ],
           ),
         ) ??
         false;

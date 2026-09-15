@@ -33,16 +33,23 @@ class LLMConfig {
     );
   }
 
-  Map<String, dynamic> toJson() {
+  /// Serialize WITHOUT secrets by default so callers can never persist an
+  /// LLM key or backend token to plaintext SharedPreferences by accident.
+  /// Pass `includeSecrets: true` only for in-memory API payloads sent to the
+  /// configured backend over the network (never for storage).
+  Map<String, dynamic> toJson({bool includeSecrets = false}) {
     return {
       'base_url': baseUrl,
-      'api_key': apiKey,
+      if (includeSecrets) 'api_key': apiKey,
       'model': model,
       'temperature': temperature,
       'backend_url': backendUrl,
-      'backend_access_token': backendAccessToken,
+      if (includeSecrets) 'backend_access_token': backendAccessToken,
     };
   }
+
+  /// Explicit secrets-included payload for backend API calls only.
+  Map<String, dynamic> toApiJson() => toJson(includeSecrets: true);
 
   factory LLMConfig.fromJson(Map<String, dynamic> json) {
     return LLMConfig(

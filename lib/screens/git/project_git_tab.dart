@@ -67,7 +67,23 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
     }
   }
 
+  /// Documented client limit: diffs above 300 KiB are truncated for display.
+  static const _maxDiffChars = 300 * 1024;
+
+  static String _truncateDiff(String diff) {
+    if (diff.length <= _maxDiffChars) return diff;
+    return '${diff.substring(0, _maxDiffChars)}\n\n… [truncated: diff exceeds the 300 KiB display limit]';
+  }
+
   Future<void> _showDiffModal(String? path, {bool staged = false}) async {
+    // Hoisted so rebuilds of the sheet reuse one request instead of
+    // refetching the diff on every frame (FutureBuilder refetch loop).
+    final diffFuture = ApiService.getGitDiff(
+      widget.backendUrl,
+      projectPath: widget.project.path,
+      relativePath: path,
+      staged: staged,
+    );
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -83,12 +99,7 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
           expand: false,
           builder: (_, scrollCtrl) {
             return FutureBuilder<String>(
-              future: ApiService.getGitDiff(
-                widget.backendUrl,
-                projectPath: widget.project.path,
-                relativePath: path,
-                staged: staged,
-              ),
+              future: diffFuture,
               builder: (context, snapshot) {
                 final theme = Theme.of(context);
                 return Column(
@@ -164,7 +175,9 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
                           : snapshot.data == null || snapshot.data!.isEmpty
                           ? const Center(child: Text('No differences found.'))
                           : GitDiffView(
-                              rawDiff: snapshot.data!,
+                              // Documented client limit: huge diffs are
+                              // truncated to keep parsing off the OOM path.
+                              rawDiff: _truncateDiff(snapshot.data!),
                               scrollController: scrollCtrl,
                             ),
                     ),
@@ -483,6 +496,7 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
               Text(_errorMessage!, textAlign: TextAlign.center),
               const SizedBox(height: 16),
               FilledButton.icon(
+                key: const Key('git-retry-button'),
                 onPressed: _loadStatus,
                 icon: const Icon(CupertinoIcons.refresh),
                 label: const Text('Retry'),
@@ -514,6 +528,7 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
+                key: const Key('git-init-button'),
                 onPressed: () async {
                   await ApiService.runTerminalCommand(
                     widget.backendUrl,
@@ -634,6 +649,7 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
               child: Column(
                 children: [
                   TextField(
+                    key: const Key('git-commit-message-field'),
                     controller: _commitMsgCtrl,
                     minLines: 1,
                     maxLines: 4,
@@ -649,6 +665,7 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
+                      key: const Key('git-commit-button'),
                       onPressed: _isCommitting ? null : _commit,
                       icon: _isCommitting
                           ? const SizedBox(

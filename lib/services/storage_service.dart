@@ -33,25 +33,38 @@ class StorageService {
   static const _backendSecretNames = ['access_token', 'ssh_password'];
   static bool secretsPersistFailed = false;
 
+  /// In-memory overflow when platform secure storage is unavailable (tests,
+  /// headless Linux). Secrets live here for the process lifetime and are
+  /// NEVER written to plaintext SharedPreferences (AGENTS.md §3.4).
+  static final Map<String, String> _memorySecrets = {};
+
   static Future<String?> _readSecret(String key) async {
     try {
-      return await _secureStorage.read(key: key);
+      final stored = await _secureStorage.read(key: key);
+      if (stored != null) return stored;
     } catch (_) {
-      return null;
+      // Fall through to the in-memory overflow below.
     }
+    return _memorySecrets[key];
   }
 
   static Future<bool> _writeSecret(String key, String value) async {
-    try {
-      if (value.isEmpty) {
+    if (value.isEmpty) {
+      _memorySecrets.remove(key);
+      try {
         await _secureStorage.delete(key: key);
-      } else {
-        await _secureStorage.write(key: key, value: value);
-      }
+      } catch (_) {}
+      return true;
+    }
+    try {
+      await _secureStorage.write(key: key, value: value);
+      _memorySecrets.remove(key);
       secretsPersistFailed = false;
       return true;
     } catch (_) {
       // Secure storage can be unavailable in tests or headless Linux sessions.
+      // Keep the secret in memory for this session only — never prefs.
+      _memorySecrets[key] = value;
       secretsPersistFailed = true;
       return false;
     }
@@ -92,21 +105,15 @@ class StorageService {
 
   static Future<void> saveLLMConfig(LLMConfig config) async {
     final prefs = await SharedPreferences.getInstance();
-    final apiKeySaved = await _writeSecret(_keyLLMApiKey, config.apiKey);
-    final tokenSaved = await _writeSecret(
-      _keyBackendAccessToken,
-      config.backendAccessToken,
-    );
+    // Secrets go to secure storage (or process memory as a last resort).
+    // They are never persisted to SharedPreferences, even when secure
+    // storage is unavailable — callers must re-enter them next launch.
+    await _writeSecret(_keyLLMApiKey, config.apiKey);
+    await _writeSecret(_keyBackendAccessToken, config.backendAccessToken);
     final map = config.toJson();
     map['backend_url'] = config.backendUrl;
-    if (apiKeySaved) {
-      map.remove('api_key');
-    }
-    if (tokenSaved) {
-      map.remove('backend_access_token');
-    } else {
-      map['backend_access_token'] = config.backendAccessToken;
-    }
+    map.remove('api_key');
+    map.remove('backend_access_token');
     await prefs.setString(_keyLLMConfig, jsonEncode(map));
   }
 
@@ -305,6 +312,22 @@ class StorageService {
     return [];
   }
 
+  /// Storage guardrails (documented limits): at most 20 sessions per
+  /// project / general store, at most 200 messages per session (oldest
+  /// dropped). Prevents unbounded SharedPreferences growth (OOM / prefs
+  /// transaction crashes on 10k-line x N-tab histories).
+  static const maxStoredSessions = 20;
+  static const maxMessagesPerSession = 200;
+
+  static ConversationSession _trimSession(ConversationSession session) {
+    if (session.messages.length <= maxMessagesPerSession) return session;
+    return session.copyWith(
+      messages: session.messages.sublist(
+        session.messages.length - maxMessagesPerSession,
+      ),
+    );
+  }
+
   static Future<void> saveConversation(
     String projectPath,
     ConversationSession session,
@@ -312,18 +335,20 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     final list = await loadConversations(projectPath);
     final idx = list.indexWhere((c) => c.id == session.id);
+    final trimmed = _trimSession(session);
 
     if (idx >= 0) {
-      list[idx] = session;
+      list[idx] = trimmed;
     } else {
-      list.insert(0, session);
+      list.insert(0, trimmed);
     }
 
     list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    final capped = list.take(maxStoredSessions).toList();
 
     await prefs.setString(
       _projectConvKey(projectPath),
-      jsonEncode(list.map((e) => e.toJson()).toList()),
+      jsonEncode(capped.map((e) => e.toJson()).toList()),
     );
   }
 
@@ -383,18 +408,20 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     final list = await loadGeneralConversations();
     final idx = list.indexWhere((c) => c.id == session.id);
+    final trimmed = _trimSession(session);
 
     if (idx >= 0) {
-      list[idx] = session;
+      list[idx] = trimmed;
     } else {
-      list.insert(0, session);
+      list.insert(0, trimmed);
     }
 
     list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    final capped = list.take(maxStoredSessions).toList();
 
     await prefs.setString(
       _keyGeneralConversations,
-      jsonEncode(list.map((e) => e.toJson()).toList()),
+      jsonEncode(capped.map((e) => e.toJson()).toList()),
     );
   }
 

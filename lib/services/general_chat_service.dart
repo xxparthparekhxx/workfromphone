@@ -102,7 +102,6 @@ class GeneralChatService {
     required Function() onDone,
     required Function(String error) onError,
   }) async {
-    ApiService.configureAccessToken(backendAccessToken, backendUrl: backendUrl);
     final uri = Uri.parse(
       '${ApiService.cleanUrl(backendUrl)}/api/v1/llm/general',
     );
@@ -118,8 +117,17 @@ class GeneralChatService {
     };
 
     try {
+      // Per-request auth headers: never mutate the global token, so a chat
+      // against backend A cannot race (and leak into) backend B.
       final request = http.Request('POST', uri)
-        ..headers.addAll(ApiService.headers(json: true, uri: uri))
+        ..headers.addAll(
+          ApiService.headersFor(
+            token: backendAccessToken,
+            backendUrl: backendUrl,
+            uri: uri,
+            json: true,
+          ),
+        )
         ..headers['Accept'] = 'text/event-stream'
         ..body = jsonEncode(payload);
 
@@ -278,13 +286,14 @@ class GeneralChatService {
             final searchUri = Uri.parse(
               '${ApiService.cleanUrl(backendUrl)}/api/v1/search',
             );
-            ApiService.configureAccessToken(
-              backendAccessToken,
-              backendUrl: backendUrl,
-            );
             final searchResp = await _client!.post(
               searchUri,
-              headers: ApiService.headers(json: true, uri: searchUri),
+              headers: ApiService.headersFor(
+                token: backendAccessToken,
+                backendUrl: backendUrl,
+                uri: searchUri,
+                json: true,
+              ),
               body: jsonEncode({'query': lastQuery, 'limit': 5}),
             );
             if (searchResp.statusCode == 200) {

@@ -25,6 +25,7 @@ class TerminalSession {
 
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
+  Timer? _keepaliveTimer;
   TerminalConnectionState _state = TerminalConnectionState.disconnected;
   bool _isDisposed = false;
   int _generation = 0;
@@ -83,19 +84,36 @@ class TerminalSession {
         (message) => _handleMessage(message, generation),
         onError: (err) {
           if (_isDisposed || generation != _generation) return;
+          _stopKeepalive();
           _setState(TerminalConnectionState.disconnected);
           onError?.call('WebSocket error: $err');
         },
         onDone: () {
           if (_isDisposed || generation != _generation) return;
+          _stopKeepalive();
           if (_state != TerminalConnectionState.exited) {
+            final closeCode = channel.closeCode;
             _setState(TerminalConnectionState.disconnected);
+            // Surface auth rejections distinctly so the UI can prompt for
+            // the token instead of showing a generic disconnect.
+            // NOTE: no auto-reconnect here by design — a new connection
+            // spawns a fresh shell and PTY state would be lost. Call
+            // connect() again explicitly (e.g. from a Retry button).
+            if (closeCode == 4401) {
+              onError?.call(
+                'Terminal rejected: invalid or missing access token.',
+              );
+            } else if (closeCode == 4403) {
+              onError?.call('Terminal rejected: browser origin not allowed.');
+            }
           }
         },
         cancelOnError: false,
       );
 
       await channel.ready;
+      if (_isDisposed || generation != _generation) return;
+      _startKeepalive(generation);
     } catch (e) {
       if (_isDisposed || generation != _generation) return;
       _setState(TerminalConnectionState.disconnected);
@@ -151,7 +169,27 @@ class TerminalSession {
     onStateChange?.call(state);
   }
 
+  /// Application-level keepalive: a `ping` frame every 30s keeps NATs and
+  /// reverse proxies from silently dropping the idle PTY socket. The backend
+  /// ignores unknown frame types, so this is a pure no-op server-side.
+  void _startKeepalive(int generation) {
+    _stopKeepalive();
+    _keepaliveTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (_isDisposed || generation != _generation) return;
+      if (_state != TerminalConnectionState.connected) return;
+      try {
+        _channel?.sink.add(jsonEncode({'type': 'ping'}));
+      } catch (_) {}
+    });
+  }
+
+  void _stopKeepalive() {
+    _keepaliveTimer?.cancel();
+    _keepaliveTimer = null;
+  }
+
   Future<void> _closeCurrentConnection() async {
+    _stopKeepalive();
     final subscription = _subscription;
     final channel = _channel;
     _subscription = null;

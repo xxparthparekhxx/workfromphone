@@ -232,66 +232,94 @@ class GitDiffView extends StatelessWidget {
       );
     }
 
-    return Container(
-      color: bgColor,
-      padding: const EdgeInsets.symmetric(vertical: 1),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Gutter: Old Line Number
-          Container(
-            width: 32,
-            padding: const EdgeInsets.only(right: 6),
-            alignment: Alignment.centerRight,
-            child: Text(
-              line.oldLineNum != null ? '${line.oldLineNum}' : '',
-              style: TextStyle(
-                color: oldNumColor,
-                fontFamily: 'monospace',
-                fontSize: 11,
-                height: 1.4,
+    // Accessibility: never rely on red/green tint alone. Additions and
+    // deletions carry a +/- sign prefix plus a Semantics label.
+    final isAddition = line.type == DiffLineType.addition;
+    final isDeletion = line.type == DiffLineType.deletion;
+    final sign = isAddition ? '+' : (isDeletion ? '−' : null);
+    return Semantics(
+      label: isAddition
+          ? 'Added line: ${line.text}'
+          : isDeletion
+          ? 'Removed line: ${line.text}'
+          : null,
+      excludeSemantics: false,
+      child: Container(
+        color: bgColor,
+        padding: const EdgeInsets.symmetric(vertical: 1),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (sign != null)
+              SizedBox(
+                width: 14,
+                child: Text(
+                  sign,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: textColor,
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            // Gutter: Old Line Number
+            Container(
+              width: 32,
+              padding: const EdgeInsets.only(right: 6),
+              alignment: Alignment.centerRight,
+              child: Text(
+                line.oldLineNum != null ? '${line.oldLineNum}' : '',
+                style: TextStyle(
+                  color: oldNumColor,
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  height: 1.4,
+                ),
               ),
             ),
-          ),
 
-          // Gutter: New Line Number
-          Container(
-            width: 32,
-            padding: const EdgeInsets.only(right: 6),
-            alignment: Alignment.centerRight,
-            child: Text(
-              line.newLineNum != null ? '${line.newLineNum}' : '',
-              style: TextStyle(
-                color: newNumColor,
-                fontFamily: 'monospace',
-                fontSize: 11,
-                height: 1.4,
+            // Gutter: New Line Number
+            Container(
+              width: 32,
+              padding: const EdgeInsets.only(right: 6),
+              alignment: Alignment.centerRight,
+              child: Text(
+                line.newLineNum != null ? '${line.newLineNum}' : '',
+                style: TextStyle(
+                  color: newNumColor,
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  height: 1.4,
+                ),
               ),
             ),
-          ),
 
-          // Gutter border
-          Container(
-            width: 1,
-            height: 16,
-            color: const Color(0xFF24283B),
-            margin: const EdgeInsets.only(right: 8),
-          ),
+            // Gutter border
+            Container(
+              width: 1,
+              height: 16,
+              color: const Color(0xFF24283B),
+              margin: const EdgeInsets.only(right: 8),
+            ),
 
-          // Code line text with prefix
-          Padding(
-            padding: const EdgeInsets.only(right: 24),
-            child: SelectableText(
-              line.text.isEmpty ? ' ' : line.text,
-              style: TextStyle(
-                color: textColor,
-                fontFamily: 'monospace',
-                fontSize: 12,
-                height: 1.4,
+            // Code line text with prefix
+            Padding(
+              padding: const EdgeInsets.only(right: 24),
+              child: SelectableText(
+                line.text.isEmpty ? ' ' : line.text,
+                style: TextStyle(
+                  color: textColor,
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  height: 1.4,
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

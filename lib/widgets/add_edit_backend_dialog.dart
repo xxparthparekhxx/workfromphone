@@ -73,22 +73,37 @@ class _AddEditBackendDialogState extends State<AddEditBackendDialog> {
     super.dispose();
   }
 
+  String? _probeMessage;
+
   Future<void> _testConnection() async {
-    final url = _urlCtrl.text.trim();
+    final url = ApiService.normalizeBackendUrl(_urlCtrl.text);
     if (url.isEmpty) return;
 
     setState(() {
       _isTesting = true;
       _isOnline = null;
+      _probeMessage = null;
     });
 
     ApiService.configureAccessToken(_tokenCtrl.text.trim(), backendUrl: url);
-    final online = await ApiService.testServer(url);
+    final reachability = await ApiService.probeServer(url);
 
     if (mounted) {
       setState(() {
         _isTesting = false;
-        _isOnline = online;
+        switch (reachability) {
+          case ServerReachability.online:
+            _isOnline = true;
+            _probeMessage = null;
+          case ServerReachability.unauthorized:
+            // Health is public, so a 401 here means the probe hit an
+            // auth-guarded route family — surface distinctly from offline.
+            _isOnline = false;
+            _probeMessage = 'Reachable, but the token was rejected (401).';
+          case ServerReachability.offline:
+            _isOnline = false;
+            _probeMessage = 'Unreachable — offline, wrong URL, or TLS blocked.';
+        }
       });
     }
   }
@@ -96,14 +111,10 @@ class _AddEditBackendDialogState extends State<AddEditBackendDialog> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
-    var url = _urlCtrl.text.trim();
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'http://$url';
-    }
-    // Remove trailing slash
-    while (url.endsWith('/')) {
-      url = url.substring(0, url.length - 1);
-    }
+    // normalizeBackendUrl adds http:// for schemaless input; the cleartext
+    // warning below stays visible so the LLM key / token are never sent over
+    // the network without the user noticing.
+    final url = ApiService.normalizeBackendUrl(_urlCtrl.text);
 
     final id =
         widget.profile?.id ??
@@ -221,6 +232,36 @@ class _AddEditBackendDialogState extends State<AddEditBackendDialog> {
 
               const SizedBox(height: 8),
 
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _urlCtrl,
+                builder: (context, value, _) {
+                  if (!ApiService.isCleartextUrl(value.text)) {
+                    return const SizedBox.shrink();
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        Icon(
+                          CupertinoIcons.exclamationmark_triangle,
+                          size: 14,
+                          color: theme.colorScheme.error,
+                        ),
+                        const SizedBox(width: 6),
+                        const Expanded(
+                          child: Text(
+                            'Cleartext http:// — the access token and LLM key '
+                            'travel unencrypted. Prefer https:// outside '
+                            'trusted LAN/VPN networks.',
+                            style: TextStyle(fontSize: 11),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+
               // Quick IP chips
               Wrap(
                 spacing: 6,
@@ -310,7 +351,9 @@ class _AddEditBackendDialogState extends State<AddEditBackendDialog> {
                           const SizedBox(width: 4),
                           Flexible(
                             child: Text(
-                              _isOnline! ? 'Online' : 'Unreachable',
+                              _isOnline!
+                                  ? 'Online'
+                                  : (_probeMessage ?? 'Unreachable'),
                               style: TextStyle(
                                 color: _isOnline! ? Colors.green : Colors.red,
                                 fontWeight: FontWeight.bold,

@@ -139,11 +139,59 @@ class UploadFileData {
   });
 }
 
+/// Typed HTTP failure so UI can distinguish re-auth (401), rate limits
+/// (429), oversized payloads (413) and offline/TLS errors instead of parsing
+/// a generic `Exception('HTTP N')` string.
+class ApiException implements Exception {
+  final int? statusCode;
+  final String detail;
+  final String context;
+
+  const ApiException(this.detail, {this.statusCode, this.context = ''});
+
+  bool get isUnauthorized => statusCode == 401;
+  bool get isRateLimited => statusCode == 429;
+  bool get isPayloadTooLarge => statusCode == 413;
+  bool get isNotFound => statusCode == 404;
+
+  @override
+  String toString() => context.isEmpty ? detail : '$context: $detail';
+}
+
+/// Distinguishes "server unreachable" from "reachable but refusing".
+enum ServerReachability { online, unauthorized, offline }
+
 class ApiService {
   static String _accessToken = '';
   static String _authenticatedOrigin = '';
 
   static String cleanUrl(String url) => url.replaceAll(RegExp(r'/+$'), '');
+
+  /// True when [url] would send the bearer token and LLM key over cleartext
+  /// HTTP. Callers surface a warning; LAN/VPN use is the accepted exception.
+  static bool isCleartextUrl(String url) {
+    final trimmed = url.trim().toLowerCase();
+    if (trimmed.startsWith('https://') || trimmed.startsWith('wss://')) {
+      return false;
+    }
+    if (trimmed.startsWith('http://') || trimmed.startsWith('ws://')) {
+      return true;
+    }
+    // Schemaless input is auto-prefixed with http:// (see _save flows).
+    return true;
+  }
+
+  /// Normalize user-typed backend input: trim, add an explicit scheme when
+  /// missing (http, with a cleartext warning shown by the caller), strip
+  /// trailing slashes.
+  static String normalizeBackendUrl(String input) {
+    var url = input.trim();
+    if (url.isEmpty) return url;
+    if (!url.contains('://')) {
+      url = 'http://$url';
+    }
+    return cleanUrl(url);
+  }
 
   static void configureAccessToken(String token, {String? backendUrl}) {
     _accessToken = token.trim();
@@ -187,6 +235,56 @@ class ApiService {
     };
   }
 
+  /// Per-request auth headers for an explicit [token] without touching the
+  /// global configured token. Use this for concurrent/secondary backend calls
+  /// so a per-request token can never race the globally configured one.
+  static Map<String, String> headersFor({
+    required String token,
+    required String backendUrl,
+    required Uri uri,
+    bool json = false,
+  }) {
+    final trimmed = token.trim();
+    var maySend = false;
+    if (trimmed.isNotEmpty) {
+      final scope = backendUrl.trim().isEmpty
+          ? ''
+          : _originOf(Uri.parse(cleanUrl(backendUrl)));
+      maySend = scope.isNotEmpty && _originOf(uri) == scope;
+    }
+    return {
+      if (json) 'Content-Type': 'application/json',
+      if (maySend) 'Authorization': 'Bearer $trimmed',
+    };
+  }
+
+  /// Decode a JSON `detail`/`error.message` body, falling back to HTTP code.
+  static String decodeErrorDetail(dynamic body, int statusCode) {
+    var detail = 'HTTP $statusCode';
+    try {
+      final parsed = jsonDecode(body as String);
+      if (parsed is Map<String, dynamic>) {
+        final direct = parsed['detail'];
+        if (direct is String && direct.isNotEmpty) return direct;
+        final error = parsed['error'];
+        if (error is Map && error['message'] is String) {
+          return error['message'] as String;
+        } else if (error is String && error.isNotEmpty) {
+          return error;
+        }
+      }
+    } catch (_) {}
+    return detail;
+  }
+
+  static Never throwForStatus(dynamic resp, String context) {
+    throw ApiException(
+      decodeErrorDetail(resp.body, resp.statusCode),
+      statusCode: resp.statusCode,
+      context: context,
+    );
+  }
+
   /// Handshake headers for a WebSocket session connecting to [uri].
   ///
   /// [token] is only attached when [uri] targets the currently configured
@@ -220,12 +318,21 @@ class ApiService {
   }
 
   static Future<bool> testServer(String backendUrl) async {
+    return (await probeServer(backendUrl)) == ServerReachability.online;
+  }
+
+  /// Probe distinguishing reachable (200), auth-guarded (401 on health means
+  /// a capability probe — health itself is public, so any 401 here surfaces
+  /// as unauthorized), and offline/TLS failures.
+  static Future<ServerReachability> probeServer(String backendUrl) async {
     try {
       final uri = Uri.parse('${cleanUrl(backendUrl)}/api/v1/health');
       final resp = await _get(uri).timeout(const Duration(seconds: 4));
-      return resp.statusCode == 200;
+      if (resp.statusCode == 200) return ServerReachability.online;
+      if (resp.statusCode == 401) return ServerReachability.unauthorized;
+      return ServerReachability.offline;
     } catch (_) {
-      return false;
+      return ServerReachability.offline;
     }
   }
 
@@ -239,7 +346,7 @@ class ApiService {
     );
     final resp = await _get(uri).timeout(const Duration(seconds: 10));
     if (resp.statusCode != 200) {
-      throw Exception('Failed to browse directory: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to browse directory');
     }
     return BrowseResult.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
@@ -249,7 +356,7 @@ class ApiService {
     final uri = Uri.parse('$base/api/v1/fs/quick-paths');
     final resp = await _get(uri).timeout(const Duration(seconds: 10));
     if (resp.statusCode != 200) {
-      throw Exception('Failed to load quick paths: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to load quick paths');
     }
     return QuickPathsData.fromJson(
       jsonDecode(resp.body) as Map<String, dynamic>,
@@ -270,7 +377,7 @@ class ApiService {
         );
     final resp = await _get(uri).timeout(const Duration(seconds: 15));
     if (resp.statusCode != 200) {
-      throw Exception('Failed to list project files: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to list project files');
     }
     return ProjectFilesData.fromJson(
       jsonDecode(resp.body) as Map<String, dynamic>,
@@ -288,7 +395,7 @@ class ApiService {
       body: jsonEncode({'path': path}),
     ).timeout(const Duration(seconds: 10));
     if (resp.statusCode != 200) {
-      throw Exception('Path validation failed');
+      throwForStatus(resp, 'Path validation failed');
     }
     return jsonDecode(resp.body) as Map<String, dynamic>;
   }
@@ -306,7 +413,7 @@ class ApiService {
     ).timeout(const Duration(seconds: 15));
 
     if (resp.statusCode != 200) {
-      throw Exception('Failed to fetch models: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to fetch models');
     }
 
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -361,7 +468,7 @@ class ApiService {
         .get(uri, headers: headers)
         .timeout(const Duration(seconds: 15));
     if (resp.statusCode != 200) {
-      throw Exception('Failed to fetch models: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to fetch models');
     }
     final decoded = jsonDecode(resp.body);
     final rawList = decoded is Map<String, dynamic>
@@ -397,7 +504,7 @@ class ApiService {
 
     final resp = await _get(uri).timeout(const Duration(seconds: 10));
     if (resp.statusCode != 200) {
-      throw Exception('Failed to read file: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to read file');
     }
     return FileContentResult.fromJson(
       jsonDecode(resp.body) as Map<String, dynamic>,
@@ -422,7 +529,7 @@ class ApiService {
     ).timeout(const Duration(seconds: 15));
 
     if (resp.statusCode != 200) {
-      throw Exception('Failed to write file: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to write file');
     }
     return true;
   }
@@ -445,7 +552,7 @@ class ApiService {
     ).timeout(const Duration(seconds: 10));
 
     if (resp.statusCode != 200) {
-      throw Exception('Failed to create item: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to create item');
     }
     return true;
   }
@@ -466,7 +573,7 @@ class ApiService {
     ).timeout(const Duration(seconds: 10));
 
     if (resp.statusCode != 200) {
-      throw Exception('Failed to delete item: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to delete item');
     }
     return true;
   }
@@ -498,12 +605,11 @@ class ApiService {
     final streamed = await request.send().timeout(const Duration(minutes: 15));
     final response = await http.Response.fromStream(streamed);
     if (response.statusCode != 200) {
-      var detail = 'HTTP ${response.statusCode}';
-      try {
-        final body = jsonDecode(response.body) as Map<String, dynamic>;
-        detail = body['detail']?.toString() ?? detail;
-      } catch (_) {}
-      throw Exception('Upload failed: $detail');
+      throw ApiException(
+        decodeErrorDetail(response.body, response.statusCode),
+        statusCode: response.statusCode,
+        context: 'Upload failed',
+      );
     }
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     return ((body['files'] as List<dynamic>?) ?? [])
@@ -546,9 +652,7 @@ class ApiService {
     ).timeout(Duration(seconds: timeoutSeconds.toInt() + 5));
 
     if (resp.statusCode != 200) {
-      throw Exception(
-        'Terminal command execution failed: HTTP ${resp.statusCode}',
-      );
+      throwForStatus(resp, 'Terminal command execution failed');
     }
 
     return TerminalHistoryItem.fromJson(
@@ -567,7 +671,7 @@ class ApiService {
         .replace(queryParameters: {'project_path': projectPath});
     final resp = await _get(uri).timeout(const Duration(seconds: 10));
     if (resp.statusCode != 200) {
-      throw Exception('Failed to load Git status: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to load Git status');
     }
     return GitStatusData.fromJson(
       jsonDecode(resp.body) as Map<String, dynamic>,
@@ -591,7 +695,7 @@ class ApiService {
     );
     final resp = await _get(uri).timeout(const Duration(seconds: 10));
     if (resp.statusCode != 200) {
-      throw Exception('Failed to load Git diff: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to load Git diff');
     }
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     return data['diff'] as String? ?? '';
@@ -610,7 +714,7 @@ class ApiService {
     ).timeout(const Duration(seconds: 15));
 
     if (resp.statusCode != 200) {
-      throw Exception('Failed to stage files: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to stage files');
     }
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     return data['success'] as bool? ?? false;
@@ -629,7 +733,7 @@ class ApiService {
     ).timeout(const Duration(seconds: 15));
 
     if (resp.statusCode != 200) {
-      throw Exception('Failed to unstage files: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to unstage files');
     }
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     return data['success'] as bool? ?? false;
@@ -648,7 +752,7 @@ class ApiService {
     ).timeout(const Duration(seconds: 15));
 
     if (resp.statusCode != 200) {
-      throw Exception('Failed to discard changes: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to discard changes');
     }
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     return data['success'] as bool? ?? false;
@@ -672,7 +776,7 @@ class ApiService {
     ).timeout(const Duration(seconds: 15));
 
     if (resp.statusCode != 200) {
-      throw Exception('Failed to commit: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to commit');
     }
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     return data['success'] as bool? ?? false;
@@ -687,7 +791,7 @@ class ApiService {
         .replace(queryParameters: {'project_path': projectPath});
     final resp = await _post(uri).timeout(const Duration(seconds: 45));
     if (resp.statusCode != 200) {
-      throw Exception('Failed to push: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to push');
     }
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     return data['success'] as bool? ?? false;
@@ -702,7 +806,7 @@ class ApiService {
         .replace(queryParameters: {'project_path': projectPath});
     final resp = await _post(uri).timeout(const Duration(seconds: 45));
     if (resp.statusCode != 200) {
-      throw Exception('Failed to pull: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to pull');
     }
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     return data['success'] as bool? ?? false;
@@ -719,7 +823,7 @@ class ApiService {
         .replace(queryParameters: {'project_path': projectPath});
     final resp = await _get(uri).timeout(const Duration(seconds: 10));
     if (resp.statusCode != 200) {
-      throw Exception('Failed to list previews: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to list previews');
     }
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     final raw = (data['entries'] as List<dynamic>? ?? [])
@@ -750,12 +854,12 @@ class ApiService {
       }),
     ).timeout(const Duration(seconds: 10));
     if (resp.statusCode != 200) {
-      throw Exception('Failed to register preview: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to register preview');
     }
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     final entry = data['entry'] as Map<String, dynamic>?;
     if (entry == null) {
-      throw Exception('Preview registration returned no entry');
+      throw const ApiException('Preview registration returned no entry');
     }
     return PreviewEntry.fromJson(entry);
   }
@@ -771,7 +875,7 @@ class ApiService {
       body: jsonEncode({'id': id}),
     ).timeout(const Duration(seconds: 10));
     if (resp.statusCode != 200) {
-      throw Exception('Failed to unregister preview: HTTP ${resp.statusCode}');
+      throwForStatus(resp, 'Failed to unregister preview');
     }
   }
 
