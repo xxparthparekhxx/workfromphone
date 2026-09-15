@@ -1,15 +1,15 @@
 // =============================================================================
-// WorkFromPhone — Interactive Website Scripts & Dynamic Release Fetcher
+// WorkFromPhone — Technical Site Scripts & GitHub Release Fetcher
 // =============================================================================
 
 const GITHUB_REPO = 'xxparthparekhxx/workfromphone';
 
 // Tab Switcher
 function switchTab(evt, tabId) {
-  const contents = document.querySelectorAll('.tab-content');
-  contents.forEach((content) => content.classList.remove('active'));
+  const panes = document.querySelectorAll('.tab-pane');
+  panes.forEach((pane) => pane.classList.remove('active'));
 
-  const buttons = document.querySelectorAll('.tab-btn');
+  const buttons = document.querySelectorAll('.tab-item');
   buttons.forEach((btn) => btn.classList.remove('active'));
 
   const target = document.getElementById(tabId);
@@ -22,7 +22,7 @@ function switchTab(evt, tabId) {
   }
 }
 
-// Copy to Clipboard
+// Copy snippet to clipboard
 function copySnippet(elementId, btn) {
   const el = document.getElementById(elementId);
   if (!el) return;
@@ -33,27 +33,27 @@ function copySnippet(elementId, btn) {
 function copyText(text, btn) {
   navigator.clipboard.writeText(text).then(() => {
     const originalText = btn.innerText || btn.textContent;
-    btn.innerText = '✓ Copied!';
-    btn.style.color = '#9ece6a';
-    btn.style.borderColor = '#9ece6a';
+    btn.innerText = 'Copied';
+    btn.style.color = 'var(--accent-green)';
+    btn.style.borderColor = 'var(--accent-green)';
 
     setTimeout(() => {
       btn.innerText = originalText;
       btn.style.color = '';
       btn.style.borderColor = '';
-    }, 2000);
+    }, 1800);
   }).catch((err) => {
     console.error('Failed to copy: ', err);
   });
 }
 
-// Format bytes to MB
+// Format bytes
 function formatBytes(bytes) {
   if (!bytes) return 'N/A';
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Dynamically fetch latest release from GitHub API
+// Dynamic release query
 async function fetchLatestRelease() {
   try {
     const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`);
@@ -61,12 +61,11 @@ async function fetchLatestRelease() {
 
     const data = await res.json();
     const tagName = data.tag_name || 'v0.1.0';
-    const cleanVersion = tagName.replace(/^backend-/, '');
+    const cleanVersion = tagName.replace(/^backend-v?/, '');
 
-    // Update release badges & version labels
-    const badge = document.getElementById('release-badge');
-    if (badge) {
-      badge.textContent = `🚀 Release ${cleanVersion} Available`;
+    const topBadge = document.getElementById('top-version-badge');
+    if (topBadge) {
+      topBadge.textContent = `v${cleanVersion}`;
     }
 
     const versionEls = document.querySelectorAll('.release-version');
@@ -74,7 +73,6 @@ async function fetchLatestRelease() {
       el.textContent = cleanVersion;
     });
 
-    // Update download buttons and sizes if available in assets
     if (data.assets && Array.isArray(data.assets)) {
       const x86Asset = data.assets.find((a) => a.name.includes('x86_64'));
       if (x86Asset) {
@@ -99,10 +97,37 @@ async function fetchLatestRelease() {
       }
     }
   } catch (err) {
-    console.warn('Could not query GitHub Releases API, fallback to default static links.', err);
+    console.warn('Fallback to static links:', err);
   }
+}
+
+// Highlight the nav link for the section currently in view
+function initScrollSpy() {
+  const sections = document.querySelectorAll('main section[id]');
+  const navLinks = document.querySelectorAll('.nav-links a[href^="#"]');
+  if (!sections.length || !navLinks.length) return;
+
+  const setActive = (id) => {
+    navLinks.forEach((link) => {
+      link.classList.toggle('active-link', link.getAttribute('href') === `#${id}`);
+    });
+  };
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          setActive(entry.target.id);
+        }
+      });
+    },
+    { rootMargin: '-45% 0px -50% 0px', threshold: 0 }
+  );
+
+  sections.forEach((section) => observer.observe(section));
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   fetchLatestRelease();
+  initScrollSpy();
 });
