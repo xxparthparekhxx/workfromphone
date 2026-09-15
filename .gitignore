@@ -60,3 +60,9 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Local AI assistant tool configs (not part of the project)
+/.agent/
+/.agents/
+/.claude/
+/.cursor/
