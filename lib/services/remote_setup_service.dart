@@ -63,6 +63,7 @@ class BackendRelease {
 class RemoteSetupService {
   static const releaseRepository = String.fromEnvironment(
     'WFP_BACKEND_RELEASE_REPO',
+    defaultValue: 'xxparthparekhxx/workfromphone',
   );
 
   /// Pinned cloudflared release (dart-define=CLOUDFLARED_VERSION=2025.x.y).

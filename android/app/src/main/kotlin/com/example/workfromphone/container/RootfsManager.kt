@@ -38,17 +38,21 @@ class RootfsManager(private val context: Context) {
     fun installedVersion(): String? =
         versionFile.takeIf { it.isFile }?.readText()?.trim()?.ifEmpty { null }
 
+    fun nativeLibraryDir(): File = File(context.applicationInfo.nativeLibraryDir)
+
     fun resolveProotBinary(): File? {
         // Installed from jniLibs/<abi>/libproot.so into nativeLibraryDir.
         val candidates = listOf(
-            File(context.applicationInfo.nativeLibraryDir, "libproot.so"),
-            File(context.applicationInfo.nativeLibraryDir, "libproot.so").let {
-                // Some ABIs ship the soname verbatim.
-                File(context.applicationInfo.nativeLibraryDir, "proot")
-            },
+            File(nativeLibraryDir(), "libproot.so"),
+            File(nativeLibraryDir(), "proot"),
         )
         return candidates.firstOrNull { it.isFile && it.canExecute() }
             ?: candidates.firstOrNull { it.isFile }
+    }
+
+    fun isProotRuntimeReady(): Boolean {
+        if (resolveProotBinary() == null) return false
+        return ProotRunner.missingRuntimeLibs(nativeLibraryDir()).isEmpty()
     }
 
     @Throws(Exception::class)

@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Native libs are force-extracted via packaging.jniLibs.useLegacyPackaging
+         in build.gradle.kts: libproot.so plus talloc/shmem/loader must exist
+         as real files in nativeLibraryDir so ProotRunner can exec them (W^X
+         forbids exec under filesDir; unextracted they stay inside the APK). -->
     <application
         android:label="workfromphone"
         android:name="${applicationName}"

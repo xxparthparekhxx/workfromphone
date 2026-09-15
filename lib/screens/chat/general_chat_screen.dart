@@ -9,6 +9,8 @@ import 'package:workfromphone/models/model_info.dart';
 import 'package:workfromphone/services/api_service.dart';
 import 'package:workfromphone/services/general_chat_service.dart';
 import 'package:workfromphone/services/storage_service.dart';
+import 'package:workfromphone/theme/app_theme.dart';
+import 'package:workfromphone/widgets/app_ui.dart';
 import 'package:workfromphone/widgets/markdown_message_view.dart';
 import 'package:workfromphone/widgets/model_picker_sheet.dart';
 import 'package:workfromphone/widgets/model_provider_avatar.dart';
@@ -249,13 +251,10 @@ class _GeneralChatScreenState extends State<GeneralChatScreen> {
     setState(() => _llmConfig = cfg);
 
     if (cfg.apiKey.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Please configure your Router API Key in Settings first.',
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
+      showAppSnackBar(
+        context,
+        'Please configure your Router API Key in Settings first.',
+        tone: AppTone.warning,
       );
       return;
     }
@@ -384,102 +383,92 @@ class _GeneralChatScreenState extends State<GeneralChatScreen> {
             minChildSize: 0.3,
             expand: false,
             builder: (context, scrollCtrl) {
-              return Container(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(CupertinoIcons.chat_bubble_2, size: 20),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'Chat History',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 17,
-                            ),
-                          ),
-                          const Spacer(),
-                          FilledButton.tonalIcon(
-                            onPressed: () {
-                              Navigator.pop(ctx);
-                              _createNewChat();
-                            },
-                            icon: const Icon(CupertinoIcons.plus, size: 16),
-                            label: const Text('New Chat'),
-                          ),
-                        ],
-                      ),
+              return Column(
+                children: [
+                  const SizedBox(height: AppSpace.sm),
+                  Container(
+                    width: 32,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.borderStrong,
+                      borderRadius: BorderRadius.circular(AppRadius.xs),
                     ),
-                    const Divider(),
-                    if (sessions.isEmpty)
-                      const Expanded(
-                        child: Center(child: Text('No previous chats found.')),
-                      )
-                    else
-                      Expanded(
-                        child: ListView.builder(
-                          controller: scrollCtrl,
-                          itemCount: sessions.length,
-                          itemBuilder: (context, idx) {
-                            final item = sessions[idx];
-                            final isCurrent = item.id == _currentSession?.id;
-                            return ListTile(
-                              selected: isCurrent,
-                              leading: Icon(
-                                isCurrent
-                                    ? CupertinoIcons.chat_bubble_fill
-                                    : CupertinoIcons.chat_bubble,
-                                color: isCurrent
-                                    ? Theme.of(context).colorScheme.primary
-                                    : null,
-                              ),
-                              title: Text(
-                                item.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontWeight: isCurrent
-                                      ? FontWeight.bold
-                                      : FontWeight.normal,
-                                ),
-                              ),
-                              subtitle: Text(
-                                '${item.model.split('/').lastOrNull ?? item.model} • ${item.messages.length} messages',
-                                style: const TextStyle(fontSize: 11),
-                              ),
-                              trailing: IconButton(
-                                icon: const Icon(
-                                  CupertinoIcons.trash,
-                                  size: 18,
-                                ),
-                                onPressed: () async {
-                                  await StorageService.deleteGeneralConversation(
-                                    item.id,
-                                  );
-                                  if (isCurrent) {
-                                    await _createNewChat();
-                                  }
-                                  if (ctx.mounted) {
-                                    Navigator.pop(ctx);
-                                  }
-                                },
-                              ),
-                              onTap: () {
-                                Navigator.pop(ctx);
-                                _switchChat(item);
-                              },
-                            );
-                          },
+                  ),
+                  const SizedBox(height: AppSpace.md),
+                  SheetHeader(
+                    title: 'Chat history',
+                    subtitle: '${sessions.length} chats',
+                    actions: [
+                      FilledButton.icon(
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _createNewChat();
+                        },
+                        icon: const Icon(CupertinoIcons.plus, size: 16),
+                        label: const Text('New Chat'),
+                      ),
+                      const SizedBox(width: AppSpace.sm),
+                    ],
+                  ),
+                  const Divider(),
+                  if (sessions.isEmpty)
+                    const Expanded(
+                      child: Center(
+                        child: EmptyState(
+                          icon: CupertinoIcons.chat_bubble,
+                          title: 'No previous chats',
                         ),
                       ),
-                  ],
-                ),
+                    )
+                  else
+                    Expanded(
+                      child: ListView.separated(
+                        controller: scrollCtrl,
+                        itemCount: sessions.length,
+                        separatorBuilder: (_, _) => const Divider(),
+                        itemBuilder: (context, idx) {
+                          final item = sessions[idx];
+                          final isCurrent = item.id == _currentSession?.id;
+                          return ListTile(
+                            selected: isCurrent,
+                            title: Text(
+                              item.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontWeight: isCurrent
+                                    ? FontWeight.w700
+                                    : FontWeight.w400,
+                              ),
+                            ),
+                            subtitle: Text(
+                              '${item.model.split('/').lastOrNull ?? item.model} · ${item.messages.length} messages',
+                            ),
+                            trailing: IconButton(
+                              icon: const Icon(CupertinoIcons.trash, size: 16),
+                              color: AppColors.dangerText,
+                              tooltip: 'Delete chat',
+                              onPressed: () async {
+                                await StorageService.deleteGeneralConversation(
+                                  item.id,
+                                );
+                                if (isCurrent) {
+                                  await _createNewChat();
+                                }
+                                if (ctx.mounted) {
+                                  Navigator.pop(ctx);
+                                }
+                              },
+                            ),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              _switchChat(item);
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                ],
               );
             },
           );
@@ -499,9 +488,10 @@ class _GeneralChatScreenState extends State<GeneralChatScreen> {
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
-          FilledButton.tonal(
+          FilledButton(
             style: FilledButton.styleFrom(
-              foregroundColor: Theme.of(ctx).colorScheme.error,
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+              foregroundColor: Theme.of(ctx).colorScheme.onError,
             ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Delete'),
@@ -516,11 +506,10 @@ class _GeneralChatScreenState extends State<GeneralChatScreen> {
       });
       await _saveCurrentSession();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Message deleted'),
-            duration: Duration(seconds: 1),
-          ),
+        showAppSnackBar(
+          context,
+          'Message deleted',
+          duration: const Duration(seconds: 1),
         );
       }
     }
@@ -558,206 +547,156 @@ class _GeneralChatScreenState extends State<GeneralChatScreen> {
       });
       await _saveCurrentSession();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Chat cleared'),
-            duration: Duration(seconds: 1),
-          ),
+        showAppSnackBar(
+          context,
+          'Chat cleared',
+          duration: const Duration(seconds: 1),
         );
       }
     }
   }
 
-  Widget _buildEmptyState(ThemeData theme) {
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircleAvatar(
-              radius: 36,
-              backgroundColor: theme.colorScheme.primaryContainer,
-              child: Icon(
-                CupertinoIcons.sparkles,
-                size: 38,
-                color: theme.colorScheme.primary,
+  Widget _buildEmptyState() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpace.lg,
+        AppSpace.xxl,
+        AppSpace.lg,
+        AppSpace.lg,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const EmptyState(
+                icon: CupertinoIcons.sparkles,
+                tone: AppTone.primary,
+                title: 'Ask anything',
+                message:
+                    'Chat with your AI provider. Turn on web search for '
+                    'up-to-date answers.',
               ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'AI General Assistant',
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
+              const SizedBox(height: AppSpace.xl),
+              const SectionLabel('Try'),
+              PromptSuggestion(
+                icon: CupertinoIcons.globe,
+                label: 'Latest AI news',
+                onTap: () {
+                  setState(() => _webSearchEnabled = true);
+                  _sendMessage(
+                    'What are the most notable recent advancements in AI models this week?',
+                  );
+                },
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Uses your OpenRouter API key from Settings, with optional live web search.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 13,
-                color: theme.colorScheme.onSurfaceVariant,
+              PromptSuggestion(
+                icon: CupertinoIcons.search,
+                label: 'Search documentation',
+                onTap: () {
+                  setState(() => _webSearchEnabled = true);
+                  _sendMessage(
+                    'Search Flutter documentation for best practices on WebSocket connection lifecycle.',
+                  );
+                },
               ),
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'Suggested Prompts:',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: [
-                ActionChip(
-                  avatar: const Icon(CupertinoIcons.globe, size: 16),
-                  label: const Text('Latest AI tech news'),
-                  onPressed: () {
-                    setState(() => _webSearchEnabled = true);
-                    _sendMessage(
-                      'What are the most notable recent advancements in AI models this week?',
-                    );
-                  },
+              PromptSuggestion(
+                icon: CupertinoIcons.chevron_left_slash_chevron_right,
+                label: 'Write a Python script',
+                onTap: () => _sendMessage(
+                  'Write a Python script that parses JSON data and computes statistical metrics.',
                 ),
-                ActionChip(
-                  avatar: const Icon(CupertinoIcons.search, size: 16),
-                  label: const Text('Search documentation'),
-                  onPressed: () {
-                    setState(() => _webSearchEnabled = true);
-                    _sendMessage(
-                      'Search Flutter documentation for best practices on WebSocket connection lifecycle.',
-                    );
-                  },
+              ),
+              PromptSuggestion(
+                icon: CupertinoIcons.lightbulb,
+                label: 'Architect a system',
+                onTap: () => _sendMessage(
+                  'Explain how to design an event-driven architecture using microservices and Redis streams.',
                 ),
-                ActionChip(
-                  avatar: const Icon(
-                    CupertinoIcons.chevron_left_slash_chevron_right,
-                    size: 16,
-                  ),
-                  label: const Text('Write Python script'),
-                  onPressed: () => _sendMessage(
-                    'Write a Python script that parses JSON data and computes statistical metrics.',
-                  ),
-                ),
-                ActionChip(
-                  avatar: const Icon(CupertinoIcons.lightbulb, size: 16),
-                  label: const Text('Architect a system'),
-                  onPressed: () => _sendMessage(
-                    'Explain how to design an event-driven architecture using microservices and Redis streams.',
-                  ),
-                ),
-              ],
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildMessageBubble(ChatMessage msg) {
-    final theme = Theme.of(context);
     final isUser = msg.role == MessageRole.user;
 
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: isUser
-            ? theme.colorScheme.primaryContainer.withValues(alpha: 0.45)
-            : theme.colorScheme.surfaceContainerHigh.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isUser
-              ? theme.colorScheme.primary.withValues(alpha: 0.2)
-              : theme.colorScheme.outlineVariant.withValues(alpha: 0.25),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    return MessageShell(
+      isUser: isUser,
+      leading: isUser
+          ? const Icon(
+              CupertinoIcons.person_fill,
+              size: 14,
+              color: AppColors.textMuted,
+            )
+          : ModelProviderAvatar(modelId: _llmConfig.model, size: 18),
+      label: isUser
+          ? 'You'
+          : (_llmConfig.model.split('/').lastOrNull ?? 'Assistant'),
+      actions: [
+        if (!isUser && msg.isStreaming)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: AppSpace.sm),
+            child: SizedBox(
+              width: 10,
+              height: 10,
+              child: CircularProgressIndicator(strokeWidth: 1.5),
+            ),
+          ),
+        if (msg.content.isNotEmpty && !msg.isStreaming) ...[
+          CompactIconButton(
+            icon: CupertinoIcons.doc_on_doc,
+            tooltip: 'Copy text',
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: msg.content));
+              showAppSnackBar(
+                context,
+                'Copied to clipboard',
+                duration: const Duration(seconds: 1),
+              );
+            },
+          ),
+          CompactIconButton(
+            icon: CupertinoIcons.trash,
+            tooltip: 'Delete message',
+            onPressed: () => _deleteMessage(msg),
+          ),
+        ],
+      ],
+      children: [
+        if (msg.content.isNotEmpty)
+          MarkdownMessageView(
+            data: msg.content,
+            isUser: isUser,
+            isStreaming: msg.isStreaming,
+          ),
+        if (msg.isStreaming && msg.statusMessage != null) ...[
+          const SizedBox(height: AppSpace.sm),
           Row(
             children: [
-              Icon(
-                isUser ? CupertinoIcons.person_fill : CupertinoIcons.sparkles,
-                size: 15,
-                color: isUser
-                    ? theme.colorScheme.primary
-                    : theme.colorScheme.secondary,
+              const SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(strokeWidth: 1.5),
               ),
-              const SizedBox(width: 6),
-              Text(
-                isUser
-                    ? 'You'
-                    : (_llmConfig.model.split('/').lastOrNull ?? 'Assistant'),
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
+              const SizedBox(width: AppSpace.sm),
+              Expanded(
+                child: Text(
+                  msg.statusMessage!,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
+                    color: AppColors.textSecondary,
+                  ),
                 ),
-              ),
-              const Spacer(),
-              IconButton(
-                icon: const Icon(CupertinoIcons.doc_on_doc, size: 14),
-                tooltip: 'Copy text',
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: msg.content));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Copied to clipboard'),
-                      duration: Duration(seconds: 1),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                icon: Icon(
-                  CupertinoIcons.trash,
-                  size: 14,
-                  color: theme.colorScheme.error.withValues(alpha: 0.8),
-                ),
-                tooltip: 'Delete message',
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                onPressed: () => _deleteMessage(msg),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          if (msg.content.isNotEmpty)
-            MarkdownMessageView(
-              data: msg.content,
-              isUser: isUser,
-              isStreaming: msg.isStreaming,
-            ),
-          if (msg.isStreaming && msg.statusMessage != null) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const SizedBox(
-                  width: 12,
-                  height: 12,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    msg.statusMessage!,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
         ],
-      ),
+      ],
     );
   }
 
@@ -767,224 +706,222 @@ class _GeneralChatScreenState extends State<GeneralChatScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        titleSpacing: 0,
+        titleSpacing: AppSpace.sm,
         title: InkWell(
           onTap: _openHistorySheet,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppRadius.sm),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-            child: Row(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpace.sm,
+              vertical: AppSpace.xs,
+            ),
+            child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Flexible(
-                  child: Text(
-                    _currentSession?.title ?? 'General Chat',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Assistant', style: theme.textTheme.titleSmall),
+                    const SizedBox(width: AppSpace.xs),
+                    const Icon(
+                      CupertinoIcons.chevron_down,
+                      size: 12,
+                      color: AppColors.textMuted,
                     ),
-                  ),
+                  ],
                 ),
-                const SizedBox(width: 4),
-                const Icon(CupertinoIcons.chevron_down, size: 16),
+                Text(
+                  _currentSession?.title ?? 'New Chat',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall,
+                ),
               ],
             ),
           ),
         ),
         actions: [
-          if (_messages.isNotEmpty)
-            IconButton(
-              icon: const Icon(CupertinoIcons.trash, size: 18),
-              tooltip: 'Clear Chat',
-              onPressed: _clearChat,
+          if (_centralHub != null)
+            Tooltip(
+              message: 'Connected to Central Hub: ${_centralHub!.name}',
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: AppSpace.xs),
+                child: ToneBadge(
+                  label: 'Hub',
+                  tone: AppTone.primary,
+                  icon: CupertinoIcons.cube_box,
+                ),
+              ),
             ),
           IconButton(
-            icon: const Icon(CupertinoIcons.bubble_left, size: 20),
-            tooltip: 'Chat History',
-            onPressed: _openHistorySheet,
-          ),
-          IconButton(
-            icon: const Icon(CupertinoIcons.plus_bubble, size: 20),
+            icon: const Icon(CupertinoIcons.square_pencil),
             tooltip: 'New Chat',
             onPressed: _createNewChat,
           ),
+          PopupMenuButton<String>(
+            tooltip: 'More actions',
+            icon: const Icon(CupertinoIcons.ellipsis_vertical, size: 18),
+            onSelected: (value) {
+              if (value == 'history') _openHistorySheet();
+              if (value == 'clear') _clearChat();
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(
+                value: 'history',
+                child: Row(
+                  children: [
+                    Icon(CupertinoIcons.clock, size: 16),
+                    SizedBox(width: AppSpace.sm),
+                    Text('Chat history'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'clear',
+                enabled: _messages.isNotEmpty,
+                child: const Row(
+                  children: [
+                    Icon(
+                      CupertinoIcons.trash,
+                      size: 16,
+                      color: AppColors.dangerText,
+                    ),
+                    SizedBox(width: AppSpace.sm),
+                    Text(
+                      'Clear chat',
+                      style: TextStyle(color: AppColors.dangerText),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: AppSpace.xs),
         ],
       ),
       body: Column(
         children: [
-          // Control Badges Bar (Model & Web Search Toggle)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.35,
-              ),
-              border: Border(
-                bottom: BorderSide(
-                  color: theme.colorScheme.outlineVariant.withValues(
-                    alpha: 0.25,
-                  ),
-                ),
-              ),
-            ),
-            child: Row(
-              children: [
-                // Model selector
-                ActionChip(
-                  key: const Key('general-chat-model-picker'),
-                  avatar: ModelProviderAvatar(
-                    modelId: _llmConfig.model,
-                    size: 18,
-                  ),
-                  label: Text(
-                    _llmConfig.model.split('/').lastOrNull ?? _llmConfig.model,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  onPressed: _isRunning ? null : _showModelPicker,
-                ),
-
-                const SizedBox(width: 8),
-
-                // Web Search Toggle Chip
-                FilterChip(
-                  key: const Key('general-chat-web-search-chip'),
-                  avatar: Icon(
-                    CupertinoIcons.globe,
-                    size: 15,
-                    color: _webSearchEnabled
-                        ? Colors.blue
-                        : theme.colorScheme.onSurfaceVariant,
-                  ),
-                  label: Text(
-                    _webSearchEnabled ? 'Web Search ON' : 'Web Search OFF',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: _webSearchEnabled
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                      color: _webSearchEnabled ? Colors.blue : null,
-                    ),
-                  ),
-                  selected: _webSearchEnabled,
-                  onSelected: (_) => _toggleWebSearch(),
-                ),
-
-                const Spacer(),
-
-                if (_centralHub != null)
-                  Tooltip(
-                    message: 'Connected to Central Hub: ${_centralHub!.name}',
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.purple.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: Colors.purple.withValues(alpha: 0.3),
-                        ),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            CupertinoIcons.cube_box,
-                            size: 12,
-                            color: Colors.purple,
-                          ),
-                          SizedBox(width: 4),
-                          Text(
-                            'Hub',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: Colors.purple,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-
-          // Message List or Empty State
           Expanded(
             child: _messages.isEmpty
-                ? _buildEmptyState(theme)
+                ? _buildEmptyState()
                 : ListView.builder(
                     controller: _scrollCtrl,
-                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    padding: const EdgeInsets.symmetric(vertical: AppSpace.sm),
                     itemCount: _messages.length,
                     itemBuilder: (context, idx) =>
                         _buildMessageBubble(_messages[idx]),
                   ),
           ),
 
-          // Input Box
+          // Composer: input on top, model / web search / send underneath.
           SafeArea(
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surface,
-                border: Border(
-                  top: BorderSide(
-                    color: theme.colorScheme.outlineVariant.withValues(
-                      alpha: 0.4,
-                    ),
-                  ),
-                ),
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpace.md,
+                AppSpace.sm,
+                AppSpace.md,
+                AppSpace.md,
               ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
+              child: ComposerFrame(
+                focusNode: _focusNode,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
                       key: const Key('general-chat-input'),
                       controller: _inputCtrl,
                       focusNode: _focusNode,
                       minLines: 1,
-                      maxLines: 5,
+                      maxLines: 6,
                       textCapitalization: TextCapitalization.sentences,
-                      decoration: InputDecoration(
+                      decoration: composerInputDecoration.copyWith(
                         hintText: _webSearchEnabled
-                            ? 'Ask with live web search...'
-                            : 'Ask anything or brainstorm...',
-                        isDense: true,
-                        filled: true,
-                        fillColor: theme.colorScheme.surfaceContainerHighest
-                            .withValues(alpha: 0.5),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide.none,
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 10,
-                        ),
+                            ? 'Ask with live web search'
+                            : 'Message the assistant',
                       ),
                       onSubmitted: (_) => _sendMessage(),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    key: const Key('general-chat-send-button'),
-                    onPressed: _isRunning ? _stopChat : () => _sendMessage(),
-                    icon: Icon(
-                      _isRunning
-                          ? CupertinoIcons.stop
-                          : CupertinoIcons.arrow_up,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppSpace.xs,
+                        0,
+                        AppSpace.xs + 2,
+                        AppSpace.xs + 2,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Flexible(
+                                  child: ActionChip(
+                                    key: const Key('general-chat-model-picker'),
+                                    tooltip: 'Choose model',
+                                    avatar: ModelProviderAvatar(
+                                      modelId: _llmConfig.model,
+                                      size: 16,
+                                    ),
+                                    label: Text(
+                                      _llmConfig.model.split('/').lastOrNull ??
+                                          _llmConfig.model,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    side: BorderSide.none,
+                                    backgroundColor: Colors.transparent,
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: _isRunning
+                                        ? null
+                                        : _showModelPicker,
+                                  ),
+                                ),
+                                const SizedBox(width: AppSpace.xs),
+                                FilterChip(
+                                  key: const Key(
+                                    'general-chat-web-search-chip',
+                                  ),
+                                  tooltip: _webSearchEnabled
+                                      ? 'Web search is on'
+                                      : 'Web search is off',
+                                  avatar: const Icon(
+                                    CupertinoIcons.globe,
+                                    size: 14,
+                                  ),
+                                  label: const Text('Web'),
+                                  selected: _webSearchEnabled,
+                                  visualDensity: VisualDensity.compact,
+                                  onSelected: (_) => _toggleWebSearch(),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: AppSpace.xs),
+                          IconButton.filled(
+                            key: const Key('general-chat-send-button'),
+                            tooltip: _isRunning ? 'Stop' : 'Send',
+                            onPressed: _isRunning
+                                ? _stopChat
+                                : () => _sendMessage(),
+                            style: _isRunning
+                                ? IconButton.styleFrom(
+                                    backgroundColor: AppColors.surfaceOverlay,
+                                    foregroundColor: AppColors.dangerText,
+                                  )
+                                : null,
+                            icon: Icon(
+                              _isRunning
+                                  ? CupertinoIcons.stop_fill
+                                  : CupertinoIcons.arrow_up,
+                              size: 18,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

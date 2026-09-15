@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -53,6 +55,16 @@ android {
         }
     }
 
+    packaging {
+        // Force-extract .so files (libproot.so + talloc/shmem/loader) into
+        // nativeLibraryDir: ProotRunner execs the binary, which requires a
+        // real file (W^X forbids exec under filesDir, and unextracted libs
+        // stay inside the APK so the status screen reports Missing).
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     buildTypes {
         release {
             // Use a dedicated release keystore when key.properties is present.
@@ -74,4 +86,43 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+// proot + libtalloc + libandroid-shmem + loader are fetched, not checked in.
+// Pull them before packaging so a plain `flutter run` / CI APK can actually
+// exec the on-device container (the linker error is "libtalloc.so.2 not found"
+// when this step is skipped).
+val repoRoot = rootProject.projectDir.parentFile
+val fetchProot = tasks.register<Exec>("fetchProot") {
+    workingDir = repoRoot
+    commandLine("bash", repoRoot.resolve("scripts/fetch-proot.sh").absolutePath)
+    onlyIf {
+        listOf("arm64-v8a", "x86_64").any { abi ->
+            !file("src/main/jniLibs/$abi/libproot.so").isFile ||
+                !file("src/main/jniLibs/$abi/libtalloc.so").isFile ||
+                !file("src/main/jniLibs/$abi/libandroid-shmem.so").isFile ||
+                !file("src/main/jniLibs/$abi/libproot-loader.so").isFile
+        }
+    }
+}
+
+// Always rewrite DT_NEEDED even when fetch is skipped: an already-fetched
+// libproot.so still NEEDs libtalloc.so.2, which Android will not load.
+val patchProotNeeded = tasks.register<Exec>("patchProotNeeded") {
+    workingDir = repoRoot
+    dependsOn(fetchProot)
+    commandLine(
+        "bash",
+        "-c",
+        "python3 scripts/patch-proot-dtneeded.py android/app/src/main/jniLibs/*/libproot.so",
+    )
+    onlyIf {
+        listOf("arm64-v8a", "x86_64").any { abi ->
+            file("src/main/jniLibs/$abi/libproot.so").isFile
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(patchProotNeeded)
 }

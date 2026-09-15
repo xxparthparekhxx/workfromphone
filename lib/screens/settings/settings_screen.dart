@@ -10,7 +10,9 @@ import 'package:workfromphone/screens/settings/remote_backend_setup_screen.dart'
 import 'package:workfromphone/services/api_service.dart';
 import 'package:workfromphone/services/remote_setup_service.dart';
 import 'package:workfromphone/services/storage_service.dart';
+import 'package:workfromphone/theme/app_theme.dart';
 import 'package:workfromphone/widgets/add_edit_backend_dialog.dart';
+import 'package:workfromphone/widgets/app_ui.dart';
 import 'package:workfromphone/widgets/model_picker_sheet.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -49,25 +51,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   final List<Map<String, String>> _providerPresets = [
     {
-      'name': 'OpenRouter (Recommended)',
+      'name': 'OpenRouter',
       'url': 'https://openrouter.ai/api/v1',
       'defaultModel': 'anthropic/claude-3.5-sonnet',
     },
     {
-      'name': 'OpenAI Official',
+      'name': 'OpenAI',
       'url': 'https://api.openai.com/v1',
       'defaultModel': 'gpt-4o',
     },
     {
-      'name': 'Groq Cloud',
+      'name': 'Groq',
       'url': 'https://api.groq.com/openai/v1',
       'defaultModel': 'llama-3.3-70b-versatile',
     },
     {
-      'name': 'Ollama (Local on PC)',
+      'name': 'Ollama (local)',
       'url': 'http://127.0.0.1:11434/v1',
       'defaultModel': 'qwen2.5-coder',
     },
+  ];
+
+  static const _suggestedModels = [
+    'anthropic/claude-3.7-sonnet',
+    'anthropic/claude-3.5-sonnet',
+    'meta-llama/llama-3.3-70b-instruct:free',
+    'deepseek/deepseek-r1:free',
+    'openai/gpt-4o',
+    'openai/o3-mini',
+    'deepseek/deepseek-chat',
+    'google/gemini-2.0-flash-001',
   ];
 
   @override
@@ -150,7 +163,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             labelText:
                 '${_activeBackendProfile?.username}@'
                 '${_activeBackendProfile?.host}',
-            border: const OutlineInputBorder(),
           ),
           onSubmitted: (value) => Navigator.pop(context, value),
         ),
@@ -209,11 +221,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       });
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('SSH reconnection failed: $error'),
-            backgroundColor: Colors.red,
-          ),
+        showAppSnackBar(
+          context,
+          'SSH reconnection failed: $error',
+          tone: AppTone.danger,
         );
       }
     } finally {
@@ -269,6 +280,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: const Text('Cancel'),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+              foregroundColor: Theme.of(ctx).colorScheme.onError,
+            ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Remove'),
           ),
@@ -332,16 +347,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     if (mounted && showConfirmation) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            StorageService.secretsPersistFailed
-                ? 'Settings saved, but secure storage was unavailable. Secrets were not persisted.'
-                : 'Settings saved successfully!',
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      if (StorageService.secretsPersistFailed) {
+        showAppSnackBar(
+          context,
+          'Settings saved, but secure storage was unavailable. Secrets were not persisted.',
+          tone: AppTone.warning,
+        );
+      } else {
+        showAppSnackBar(context, 'Settings saved', tone: AppTone.success);
+      }
     }
   }
 
@@ -408,13 +422,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _modelsList = list;
           _isFetchingModels = false;
         });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Loaded ${list.length} models from provider.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        showAppSnackBar(context, 'Loaded ${list.length} models from provider');
       }
       return list;
     } catch (e) {
@@ -422,12 +430,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         setState(() {
           _isFetchingModels = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load models: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
+        showAppSnackBar(
+          context,
+          'Failed to load models: $e',
+          tone: AppTone.danger,
         );
       }
       return _modelsList;
@@ -441,829 +447,527 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  void _openModelPicker() {
+    ModelPickerSheet.show(
+      context: context,
+      selectedModelId: _modelCtrl.text,
+      availableModels: _modelsList,
+      onRefresh: _fetchModels,
+      onModelSelected: (m) {
+        setState(() {
+          _modelCtrl.text = m.id;
+        });
+      },
+    );
+  }
+
+  Future<void> _openSetupScreen(Widget screen) async {
+    final configured = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => screen),
+    );
+    if (configured == true) {
+      await _loadSettings();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Settings & Harness',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
+        title: const Text('Settings'),
         actions: [
-          IconButton(
-            icon: const Icon(CupertinoIcons.arrow_down_doc),
-            tooltip: 'Save Settings',
-            onPressed: _saveSettings,
+          Tooltip(
+            message: 'Save Settings',
+            child: TextButton(
+              onPressed: _saveSettings,
+              child: const Text('Save'),
+            ),
           ),
+          const SizedBox(width: AppSpace.sm),
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(
+          AppSpace.lg,
+          AppSpace.md,
+          AppSpace.lg,
+          AppSpace.xxl,
+        ),
         children: [
-          // Section 1: PC Backend Connection & Multi-Host Devs
-          _buildSectionHeader(
-            'PC Backend Connection',
-            CupertinoIcons.desktopcomputer,
-          ),
-          Card(
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-              ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: _backendUrlCtrl,
-                    decoration: InputDecoration(
-                      labelText: 'FastAPI Backend URL',
-                      hintText: 'http://127.0.0.1:8000',
-                      prefixIcon: const Icon(CupertinoIcons.link),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      isDense: true,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      ActionChip(
-                        label: const Text('127.0.0.1:8000'),
-                        onPressed: () =>
-                            _backendUrlCtrl.text = 'http://127.0.0.1:8000',
-                      ),
-                      ActionChip(
-                        label: const Text('10.0.2.2:8000 (Android Emulator)'),
-                        onPressed: () =>
-                            _backendUrlCtrl.text = 'http://10.0.2.2:8000',
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    key: const Key('backend-access-token-field'),
-                    controller: _backendAccessTokenCtrl,
-                    obscureText: _obscureBackendToken,
-                    decoration: InputDecoration(
-                      labelText: 'Backend Access Token (Optional)',
-                      hintText: 'Configured ACCESS_TOKEN on your server',
-                      prefixIcon: const Icon(CupertinoIcons.lock),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _obscureBackendToken
-                              ? CupertinoIcons.eye
-                              : CupertinoIcons.eye_slash,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _obscureBackendToken = !_obscureBackendToken;
-                          });
-                        },
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      isDense: true,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      FilledButton.tonalIcon(
-                        onPressed: _isTestingBackend
-                            ? null
-                            : _testBackendConnection,
-                        icon: _isTestingBackend
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(CupertinoIcons.wifi, size: 18),
-                        label: const Text('Test Connection'),
-                      ),
-                      const SizedBox(width: 12),
-                      if (_backendOnline != null)
-                        Row(
-                          children: [
-                            Icon(
-                              _backendOnline!
-                                  ? CupertinoIcons.check_mark_circled
-                                  : CupertinoIcons.clear,
-                              color: _backendOnline!
-                                  ? Colors.green
-                                  : Colors.red,
-                              size: 18,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              _backendOnline! ? 'Connected' : 'Unreachable',
-                              style: TextStyle(
-                                color: _backendOnline!
-                                    ? Colors.green
-                                    : Colors.red,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                    ],
-                  ),
-
-                  // Configured Dev Host Profiles
-                  const SizedBox(height: 14),
-                  const Divider(),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      const Text(
-                        'Saved Server Profiles:',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const Spacer(),
-                      TextButton.icon(
-                        style: TextButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                        ),
-                        onPressed: _addNewDirectServer,
-                        icon: const Icon(CupertinoIcons.plus, size: 14),
-                        label: const Text(
-                          'Add Server',
-                          style: TextStyle(fontSize: 11),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  if (_devProfiles.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Text(
-                        'No saved server profiles. Add your server above or set up over SSH.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    )
-                  else
-                    ..._devProfiles.map((p) {
-                      final isActive = _activeBackendProfile?.id == p.id;
-                      return Card(
-                        elevation: 0,
-                        margin: const EdgeInsets.only(bottom: 6),
-                        color: isActive
-                            ? theme.colorScheme.primaryContainer.withValues(
-                                alpha: 0.3,
-                              )
-                            : theme.colorScheme.surfaceContainerHighest
-                                  .withValues(alpha: 0.3),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          side: BorderSide(
-                            color: isActive
-                                ? theme.colorScheme.primary.withValues(
-                                    alpha: 0.4,
-                                  )
-                                : theme.colorScheme.outlineVariant.withValues(
-                                    alpha: 0.2,
-                                  ),
-                          ),
-                        ),
-                        child: ListTile(
-                          dense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 2,
-                          ),
-                          leading: Icon(
-                            isActive
-                                ? CupertinoIcons.check_mark_circled_solid
-                                : CupertinoIcons.circle,
-                            color: isActive ? Colors.green : null,
-                          ),
-                          title: Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  p.name,
-                                  style: TextStyle(
-                                    fontWeight: isActive
-                                        ? FontWeight.bold
-                                        : FontWeight.w600,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              if (isActive) ...[
-                                const SizedBox(width: 6),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 5,
-                                    vertical: 1,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.green.withValues(alpha: 0.2),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: const Text(
-                                    'ACTIVE',
-                                    style: TextStyle(
-                                      fontSize: 8,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.green,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                          subtitle: Text(
-                            '${p.backendUrl} (${p.transport.name})',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontFamily: 'monospace',
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(
-                                  CupertinoIcons.pencil,
-                                  size: 16,
-                                ),
-                                tooltip: 'Edit Server',
-                                onPressed: () => _editProfile(p),
-                              ),
-                              IconButton(
-                                icon: const Icon(
-                                  CupertinoIcons.trash,
-                                  size: 16,
-                                  color: Colors.redAccent,
-                                ),
-                                tooltip: 'Remove Server',
-                                onPressed: () => _deleteProfile(p),
-                              ),
-                            ],
-                          ),
-                          onTap: () => _switchDevProfile(p),
-                        ),
-                      );
-                    }),
-
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _addNewDirectServer,
-                          icon: const Icon(CupertinoIcons.plus, size: 14),
-                          label: const Text(
-                            'Add URL / Host',
-                            style: TextStyle(fontSize: 12),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 10),
-                  const Divider(),
-                  const SizedBox(height: 6),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const CircleAvatar(
-                      child: Icon(CupertinoIcons.cube_box),
-                    ),
-                    title: const Text('Run backend on this phone'),
-                    subtitle: const Text(
-                      'No-PC mode: Debian container with the backend built in',
-                    ),
-                    trailing: const Icon(CupertinoIcons.chevron_right),
-                    onTap: () async {
-                      final configured = await Navigator.push<bool>(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const OnDeviceSetupScreen(),
-                        ),
-                      );
-                      if (configured == true) {
-                        await _loadSettings();
-                      }
-                    },
-                  ),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const CircleAvatar(
-                      child: Icon(CupertinoIcons.arrow_down_circle),
-                    ),
-                    title: const Text('Set up a Linux computer'),
-                    subtitle: const Text(
-                      'Install or upgrade the backend securely over SSH',
-                    ),
-                    trailing: const Icon(CupertinoIcons.chevron_right),
-                    onTap: () async {
-                      final configured = await Navigator.push<bool>(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const RemoteBackendSetupScreen(),
-                        ),
-                      );
-                      if (configured == true) {
-                        await _loadSettings();
-                      }
-                    },
-                  ),
-                  if (_activeBackendProfile?.transport ==
-                      BackendTransport.sshTunnel)
-                    FilledButton.tonalIcon(
-                      key: const Key('reconnect-ssh-backend'),
-                      onPressed: _isReconnecting ? null : _reconnectSshTunnel,
-                      icon: _isReconnecting
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(CupertinoIcons.arrow_uturn_left),
-                      label: Text(
-                        _isReconnecting
-                            ? 'Connecting…'
-                            : 'Reconnect SSH tunnel',
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 20),
-
-          // Section 2: Dedicated Cloud Hub (Firecracker VM & Search Server)
-          _buildSectionHeader(
-            'Dedicated Cloud Hub (Optional)',
-            CupertinoIcons.cloud_upload,
-          ),
-          Card(
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-              ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Powers Firecracker microVM sandboxes, live web search, and secure artifact sharing.',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _hubUrlCtrl,
-                    decoration: InputDecoration(
-                      labelText: 'Central Hub URL',
-                      hintText: 'https://hub.example.com',
-                      prefixIcon: const Icon(CupertinoIcons.cube_box),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      isDense: true,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _hubAccessTokenCtrl,
-                    obscureText: _obscureHubToken,
-                    decoration: InputDecoration(
-                      labelText: 'Hub Access Token (Optional)',
-                      hintText: 'Configured ACCESS_TOKEN on your Hub',
-                      prefixIcon: const Icon(CupertinoIcons.lock),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _obscureHubToken
-                              ? CupertinoIcons.eye
-                              : CupertinoIcons.eye_slash,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _obscureHubToken = !_obscureHubToken;
-                          });
-                        },
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      isDense: true,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      FilledButton.tonalIcon(
-                        onPressed: _isTestingHub ? null : _testHubConnection,
-                        icon: _isTestingHub
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(CupertinoIcons.bolt, size: 18),
-                        label: const Text('Test Hub Connection'),
-                      ),
-                      const SizedBox(width: 12),
-                      if (_hubOnline != null)
-                        Row(
-                          children: [
-                            Icon(
-                              _hubOnline!
-                                  ? CupertinoIcons.check_mark_circled
-                                  : CupertinoIcons.clear,
-                              color: _hubOnline! ? Colors.green : Colors.red,
-                              size: 18,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              _hubOnline! ? 'Hub Online' : 'Unreachable',
-                              style: TextStyle(
-                                color: _hubOnline! ? Colors.green : Colors.red,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 20),
-
-          // Section 3: LLM Router & Provider Config
-          _buildSectionHeader(
-            'LLM Provider & Router',
-            CupertinoIcons.lightbulb,
-          ),
-          Card(
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-              ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Compatible with OpenRouter or any OpenAI-compatible router/endpoint.',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Presets
-                  const Text(
-                    'Quick Presets:',
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    children: _providerPresets.map((preset) {
-                      final isSelected = _baseUrlCtrl.text == preset['url'];
-                      return ChoiceChip(
-                        label: Text(preset['name']!),
-                        selected: isSelected,
-                        onSelected: (_) => _applyProviderPreset(preset),
-                      );
-                    }).toList(),
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // Base URL
-                  TextField(
-                    controller: _baseUrlCtrl,
-                    decoration: InputDecoration(
-                      labelText: 'OpenAI / Router Base URL',
-                      hintText: 'https://openrouter.ai/api/v1',
-                      prefixIcon: const Icon(CupertinoIcons.cloud),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      isDense: true,
-                    ),
-                  ),
-
-                  const SizedBox(height: 14),
-
-                  // API Key
-                  TextField(
-                    controller: _apiKeyCtrl,
-                    obscureText: _obscureApiKey,
-                    decoration: InputDecoration(
-                      labelText: 'Router API Key',
-                      hintText: 'sk-or-v1-... or sk-...',
-                      prefixIcon: const Icon(Icons.key),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _obscureApiKey
-                              ? CupertinoIcons.eye
-                              : CupertinoIcons.eye_slash,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _obscureApiKey = !_obscureApiKey;
-                          });
-                        },
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      isDense: true,
-                    ),
-                  ),
-
-                  const SizedBox(height: 14),
-
-                  // Model Selection
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _modelCtrl,
-                          decoration: InputDecoration(
-                            labelText: 'Selected Model ID',
-                            hintText: 'anthropic/claude-3.5-sonnet',
-                            prefixIcon: const Icon(CupertinoIcons.sparkles),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            isDense: true,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filledTonal(
-                        icon: const Icon(CupertinoIcons.search),
-                        tooltip: 'Search & Pick Model',
-                        onPressed: () {
-                          ModelPickerSheet.show(
-                            context: context,
-                            selectedModelId: _modelCtrl.text,
-                            availableModels: _modelsList,
-                            onRefresh: _fetchModels,
-                            onModelSelected: (m) {
-                              setState(() {
-                                _modelCtrl.text = m.id;
-                              });
-                            },
-                          );
-                        },
-                      ),
-                      const SizedBox(width: 4),
-                      IconButton.filledTonal(
-                        icon: _isFetchingModels
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(CupertinoIcons.cloud_download),
-                        tooltip: 'Fetch Live Models',
-                        onPressed: _isFetchingModels ? null : _fetchModels,
-                      ),
-                    ],
-                  ),
-
-                  // Quick model chips
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      const Text(
-                        'Recommended Models:',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const Spacer(),
-                      TextButton.icon(
-                        style: TextButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                        ),
-                        icon: const Icon(CupertinoIcons.search, size: 14),
-                        label: const Text(
-                          'Browse All',
-                          style: TextStyle(fontSize: 11),
-                        ),
-                        onPressed: () {
-                          ModelPickerSheet.show(
-                            context: context,
-                            selectedModelId: _modelCtrl.text,
-                            availableModels: _modelsList,
-                            onRefresh: _fetchModels,
-                            onModelSelected: (m) {
-                              setState(() {
-                                _modelCtrl.text = m.id;
-                              });
-                            },
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children:
-                        [
-                          'anthropic/claude-3.7-sonnet',
-                          'anthropic/claude-3.5-sonnet',
-                          'meta-llama/llama-3.3-70b-instruct:free',
-                          'deepseek/deepseek-r1:free',
-                          'openai/gpt-4o',
-                          'openai/o3-mini',
-                          'deepseek/deepseek-chat',
-                          'google/gemini-2.0-flash-001',
-                        ].map((m) {
-                          final isSelected = _modelCtrl.text == m;
-                          final isFree = m.contains(':free');
-                          final label = m.split('/').lastOrNull ?? m;
-                          return ActionChip(
-                            avatar: isSelected
-                                ? const Icon(
-                                    CupertinoIcons.check_mark,
-                                    size: 14,
-                                  )
-                                : (isFree
-                                      ? const Icon(
-                                          CupertinoIcons.bolt,
-                                          size: 14,
-                                          color: Colors.green,
-                                        )
-                                      : null),
-                            label: Text(
-                              label,
-                              style: TextStyle(
-                                color: isFree && !isSelected
-                                    ? Colors.green
-                                    : null,
-                                fontWeight: isSelected
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
-                              ),
-                            ),
-                            backgroundColor: isSelected
-                                ? theme.colorScheme.primaryContainer
-                                : (isFree
-                                      ? Colors.green.withValues(alpha: 0.1)
-                                      : null),
-                            onPressed: () {
-                              setState(() {
-                                _modelCtrl.text = m;
-                              });
-                            },
-                          );
-                        }).toList(),
-                  ),
-
-                  // If fetched models exist, allow picking
-                  if (_modelsList.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      initialValue:
-                          _modelsList.any((m) => m.id == _modelCtrl.text)
-                          ? _modelCtrl.text
-                          : null,
-                      isExpanded: true,
-                      decoration: InputDecoration(
-                        labelText:
-                            'Or choose from fetched models (${_modelsList.length})',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        isDense: true,
-                      ),
-                      items: _modelsList.map((m) {
-                        return DropdownMenuItem<String>(
-                          value: m.id,
-                          child: Text(
-                            '${m.name} (${m.id})',
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                        );
-                      }).toList(),
-                      onChanged: (val) {
-                        if (val != null) {
-                          setState(() {
-                            _modelCtrl.text = val;
-                          });
-                        }
-                      },
-                    ),
-                  ],
-
-                  const SizedBox(height: 16),
-
-                  // Temperature
-                  Row(
-                    children: [
-                      const Text('Temperature:'),
-                      const Spacer(),
-                      Text(
-                        _temperature.toStringAsFixed(2),
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  Slider(
-                    value: _temperature,
-                    min: 0.0,
-                    max: 1.0,
-                    divisions: 20,
-                    label: _temperature.toStringAsFixed(2),
-                    onChanged: (val) {
-                      setState(() {
-                        _temperature = val;
-                      });
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 24),
-
-          // Save Button
-          FilledButton.icon(
-            onPressed: _saveSettings,
-            icon: const Icon(CupertinoIcons.arrow_down_doc),
-            label: const Text('Save Configuration'),
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-            ),
-          ),
-
-          const SizedBox(height: 16),
+          const SectionLabel('Backend'),
+          _buildConnectionCard(),
+          const SizedBox(height: AppSpace.md),
+          _buildSavedServersCard(),
+          const SizedBox(height: AppSpace.md),
+          _buildSetupCard(),
+          const SizedBox(height: AppSpace.xl),
+          const SectionLabel('AI provider'),
+          _buildProviderCard(),
+          const SizedBox(height: AppSpace.xl),
+          const SectionLabel('Cloud hub · optional'),
+          _buildHubCard(),
         ],
       ),
     );
   }
 
-  Widget _buildSectionHeader(String title, IconData icon) {
+  Widget _connectionStatus({required bool testing, required bool? online}) {
+    if (testing) {
+      return const StatusPill(
+        label: 'Checking',
+        tone: AppTone.neutral,
+        busy: true,
+      );
+    }
+    if (online == null) return const SizedBox.shrink();
+    return StatusPill(
+      label: online ? 'Connected' : 'Unreachable',
+      tone: online ? AppTone.success : AppTone.danger,
+    );
+  }
+
+  Widget _cardTitle(String title, {String? subtitle, Widget? trailing}) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(left: 4, bottom: 8),
-      child: Row(
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: theme.textTheme.titleSmall),
+              if (subtitle != null) ...[
+                const SizedBox(height: 2),
+                Text(subtitle, style: theme.textTheme.bodySmall),
+              ],
+            ],
+          ),
+        ),
+        ?trailing,
+      ],
+    );
+  }
+
+  Widget _secretToggle(bool obscured, VoidCallback onToggle) {
+    return IconButton(
+      icon: Icon(
+        obscured ? CupertinoIcons.eye : CupertinoIcons.eye_slash,
+        size: 18,
+      ),
+      tooltip: obscured ? 'Show' : 'Hide',
+      onPressed: onToggle,
+    );
+  }
+
+  Widget _buildConnectionCard() {
+    final isSshTunnel =
+        _activeBackendProfile?.transport == BackendTransport.sshTunnel;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpace.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _cardTitle(
+              'Active connection',
+              subtitle: 'The FastAPI backend this app talks to.',
+              trailing: _connectionStatus(
+                testing: _isTestingBackend,
+                online: _backendOnline,
+              ),
+            ),
+            const SizedBox(height: AppSpace.lg),
+            TextField(
+              controller: _backendUrlCtrl,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                labelText: 'Backend URL',
+                hintText: 'http://127.0.0.1:8000',
+                prefixIcon: Icon(CupertinoIcons.link, size: 18),
+              ),
+            ),
+            const SizedBox(height: AppSpace.sm),
+            Wrap(
+              spacing: AppSpace.sm,
+              runSpacing: AppSpace.xs,
+              children: [
+                ActionChip(
+                  label: const Text('127.0.0.1:8000'),
+                  onPressed: () =>
+                      _backendUrlCtrl.text = 'http://127.0.0.1:8000',
+                ),
+                ActionChip(
+                  label: const Text('10.0.2.2:8000 · emulator'),
+                  onPressed: () =>
+                      _backendUrlCtrl.text = 'http://10.0.2.2:8000',
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpace.md),
+            TextField(
+              key: const Key('backend-access-token-field'),
+              controller: _backendAccessTokenCtrl,
+              obscureText: _obscureBackendToken,
+              decoration: InputDecoration(
+                labelText: 'Access token (optional)',
+                hintText: 'ACCESS_TOKEN configured on the server',
+                prefixIcon: const Icon(CupertinoIcons.lock, size: 18),
+                suffixIcon: _secretToggle(
+                  _obscureBackendToken,
+                  () => setState(
+                    () => _obscureBackendToken = !_obscureBackendToken,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpace.lg),
+            Wrap(
+              spacing: AppSpace.sm,
+              runSpacing: AppSpace.sm,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _isTestingBackend ? null : _testBackendConnection,
+                  icon: const Icon(CupertinoIcons.wifi, size: 16),
+                  label: const Text('Test connection'),
+                ),
+                if (isSshTunnel)
+                  OutlinedButton.icon(
+                    key: const Key('reconnect-ssh-backend'),
+                    onPressed: _isReconnecting ? null : _reconnectSshTunnel,
+                    icon: _isReconnecting
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(CupertinoIcons.arrow_uturn_left, size: 16),
+                    label: Text(
+                      _isReconnecting ? 'Connecting…' : 'Reconnect SSH tunnel',
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSavedServersCard() {
+    final theme = Theme.of(context);
+    return Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(icon, size: 18, color: theme.colorScheme.primary),
-          const SizedBox(width: 8),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: theme.colorScheme.primary,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpace.lg,
+              AppSpace.md,
+              AppSpace.sm,
+              AppSpace.md,
+            ),
+            child: _cardTitle(
+              'Saved servers',
+              trailing: TextButton.icon(
+                onPressed: _addNewDirectServer,
+                icon: const Icon(CupertinoIcons.plus, size: 14),
+                label: const Text('Add'),
+              ),
             ),
           ),
+          const Divider(),
+          if (_devProfiles.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(AppSpace.lg),
+              child: Text(
+                'No saved servers yet. Add one by URL, or set up a machine below.',
+                style: theme.textTheme.bodySmall,
+              ),
+            )
+          else
+            for (var i = 0; i < _devProfiles.length; i++) ...[
+              if (i > 0) const Divider(),
+              _buildProfileRow(_devProfiles[i]),
+            ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildProfileRow(BackendProfile p) {
+    final theme = Theme.of(context);
+    final isActive = _activeBackendProfile?.id == p.id;
+    return InkWell(
+      onTap: () => _switchDevProfile(p),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpace.lg,
+          AppSpace.sm,
+          AppSpace.xs,
+          AppSpace.sm,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isActive
+                  ? CupertinoIcons.largecircle_fill_circle
+                  : CupertinoIcons.circle,
+              size: 18,
+              color: isActive ? AppColors.primary : AppColors.textMuted,
+            ),
+            const SizedBox(width: AppSpace.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          p.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall,
+                        ),
+                      ),
+                      if (isActive) ...[
+                        const SizedBox(width: AppSpace.sm),
+                        const ToneBadge(label: 'Active', tone: AppTone.primary),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${p.backendUrl} · ${p.transport.name}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(CupertinoIcons.pencil, size: 16),
+              tooltip: 'Edit Server',
+              onPressed: () => _editProfile(p),
+            ),
+            IconButton(
+              icon: const Icon(CupertinoIcons.trash, size: 16),
+              color: AppColors.dangerText,
+              tooltip: 'Remove Server',
+              onPressed: () => _deleteProfile(p),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSetupCard() {
+    return Card(
+      child: Column(
+        children: [
+          ListTile(
+            leading: const IconTile(icon: CupertinoIcons.device_phone_portrait),
+            title: const Text('Run backend on this phone'),
+            subtitle: const Text('No-PC mode: a Debian container on-device'),
+            trailing: const Icon(CupertinoIcons.chevron_right, size: 16),
+            onTap: () => _openSetupScreen(const OnDeviceSetupScreen()),
+          ),
+          const Divider(),
+          ListTile(
+            leading: const IconTile(icon: CupertinoIcons.desktopcomputer),
+            title: const Text('Set up a Linux computer'),
+            subtitle: const Text('Install or upgrade the backend over SSH'),
+            trailing: const Icon(CupertinoIcons.chevron_right, size: 16),
+            onTap: () => _openSetupScreen(const RemoteBackendSetupScreen()),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProviderCard() {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpace.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _cardTitle(
+              'Provider',
+              subtitle: 'OpenRouter or any OpenAI-compatible endpoint.',
+            ),
+            const SizedBox(height: AppSpace.md),
+            Wrap(
+              spacing: AppSpace.sm,
+              runSpacing: AppSpace.xs,
+              children: _providerPresets.map((preset) {
+                return ChoiceChip(
+                  label: Text(preset['name']!),
+                  selected: _baseUrlCtrl.text == preset['url'],
+                  onSelected: (_) => _applyProviderPreset(preset),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: AppSpace.lg),
+            TextField(
+              controller: _baseUrlCtrl,
+              keyboardType: TextInputType.url,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Base URL',
+                hintText: 'https://openrouter.ai/api/v1',
+                prefixIcon: Icon(CupertinoIcons.cloud, size: 18),
+              ),
+            ),
+            const SizedBox(height: AppSpace.md),
+            TextField(
+              controller: _apiKeyCtrl,
+              obscureText: _obscureApiKey,
+              decoration: InputDecoration(
+                labelText: 'API key',
+                hintText: 'sk-or-v1-… or sk-…',
+                prefixIcon: const Icon(CupertinoIcons.lock, size: 18),
+                suffixIcon: _secretToggle(
+                  _obscureApiKey,
+                  () => setState(() => _obscureApiKey = !_obscureApiKey),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpace.xl),
+            _cardTitle(
+              'Model',
+              trailing: TextButton.icon(
+                onPressed: _openModelPicker,
+                icon: _isFetchingModels
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(CupertinoIcons.search, size: 14),
+                label: const Text('Browse all'),
+              ),
+            ),
+            const SizedBox(height: AppSpace.sm),
+            TextField(
+              controller: _modelCtrl,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Model ID',
+                hintText: 'anthropic/claude-3.5-sonnet',
+                prefixIcon: Icon(CupertinoIcons.sparkles, size: 18),
+              ),
+            ),
+            const SizedBox(height: AppSpace.sm),
+            Wrap(
+              spacing: AppSpace.sm,
+              runSpacing: AppSpace.xs,
+              children: _suggestedModels.map((m) {
+                final isFree = m.contains(':free');
+                return ChoiceChip(
+                  avatar: isFree && _modelCtrl.text != m
+                      ? const Icon(
+                          CupertinoIcons.bolt_fill,
+                          size: 12,
+                          color: AppColors.success,
+                        )
+                      : null,
+                  label: Text(m.split('/').lastOrNull ?? m),
+                  tooltip: isFree ? '$m · free' : m,
+                  selected: _modelCtrl.text == m,
+                  onSelected: (_) => setState(() => _modelCtrl.text = m),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: AppSpace.xl),
+            Row(
+              children: [
+                Text('Temperature', style: theme.textTheme.titleSmall),
+                const Spacer(),
+                Text(
+                  _temperature.toStringAsFixed(2),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primary,
+                  ),
+                ),
+              ],
+            ),
+            Slider(
+              value: _temperature,
+              min: 0.0,
+              max: 1.0,
+              divisions: 20,
+              label: _temperature.toStringAsFixed(2),
+              onChanged: (val) => setState(() => _temperature = val),
+            ),
+            Text(
+              'Lower is more focused and repeatable; higher is more varied.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: AppColors.textMuted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHubCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpace.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _cardTitle(
+              'Cloud hub',
+              subtitle:
+                  'Powers Firecracker sandboxes, live web search and secure '
+                  'artifact sharing.',
+              trailing: _connectionStatus(
+                testing: _isTestingHub,
+                online: _hubOnline,
+              ),
+            ),
+            const SizedBox(height: AppSpace.lg),
+            TextField(
+              controller: _hubUrlCtrl,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                labelText: 'Hub URL',
+                hintText: 'https://hub.example.com',
+                prefixIcon: Icon(CupertinoIcons.cube_box, size: 18),
+              ),
+            ),
+            const SizedBox(height: AppSpace.md),
+            TextField(
+              controller: _hubAccessTokenCtrl,
+              obscureText: _obscureHubToken,
+              decoration: InputDecoration(
+                labelText: 'Hub access token (optional)',
+                hintText: 'ACCESS_TOKEN configured on the hub',
+                prefixIcon: const Icon(CupertinoIcons.lock, size: 18),
+                suffixIcon: _secretToggle(
+                  _obscureHubToken,
+                  () => setState(() => _obscureHubToken = !_obscureHubToken),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpace.lg),
+            OutlinedButton.icon(
+              onPressed: _isTestingHub ? null : _testHubConnection,
+              icon: const Icon(CupertinoIcons.bolt, size: 16),
+              label: const Text('Test hub'),
+            ),
+          ],
+        ),
       ),
     );
   }

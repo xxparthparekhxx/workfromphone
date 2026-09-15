@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:workfromphone/models/preview_entry.dart';
 import 'package:workfromphone/screens/preview/preview_browser_screen.dart';
 import 'package:workfromphone/services/preview_session.dart';
+import 'package:workfromphone/theme/app_theme.dart';
+import 'package:workfromphone/widgets/app_ui.dart';
 
 class ProjectPreviewTab extends StatelessWidget {
   final List<PreviewEntry> entries;
@@ -28,28 +30,26 @@ class ProjectPreviewTab extends StatelessWidget {
       PreviewSessionState.connected => 'Live',
       PreviewSessionState.disconnected => 'Offline',
     };
-    final stateColor = switch (connectionState) {
-      PreviewSessionState.connected => Colors.green,
-      PreviewSessionState.connecting => Colors.amber,
-      PreviewSessionState.disconnected => theme.colorScheme.onSurfaceVariant,
+    final stateTone = switch (connectionState) {
+      PreviewSessionState.connected => AppTone.success,
+      PreviewSessionState.connecting => AppTone.warning,
+      PreviewSessionState.disconnected => AppTone.neutral,
     };
 
     return Column(
       children: [
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          color: theme.colorScheme.surfaceContainerHighest,
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpace.lg,
+            vertical: AppSpace.sm,
+          ),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: AppColors.border)),
+          ),
           child: Row(
             children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: stateColor,
-                  shape: BoxShape.circle,
-                ),
-              ),
+              StatusDot(tone: stateTone),
               const SizedBox(width: 8),
               Text(
                 stateLabel,
@@ -76,33 +76,16 @@ class ProjectPreviewTab extends StatelessWidget {
 
   Widget _buildBody(BuildContext context, ThemeData theme) {
     if (entries.isEmpty) {
-      return Center(
-        key: const Key('preview-empty-state'),
+      return const Center(
+        key: Key('preview-empty-state'),
         child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                CupertinoIcons.globe,
-                size: 48,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'No previews registered',
-                style: theme.textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Ask the AI to start a dev server, or use /preview '
-                '<port> <label> in the chat to register one manually.',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
+          padding: EdgeInsets.all(AppSpace.xl),
+          child: EmptyState(
+            icon: CupertinoIcons.globe,
+            title: 'No previews registered',
+            message:
+                'Ask the agent to start a dev server, or type /preview '
+                '<port> <label> in chat to register one manually.',
           ),
         ),
       );

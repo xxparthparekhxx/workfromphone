@@ -6,6 +6,14 @@ import 'package:flutter/cupertino.dart';
 import 'package:workfromphone/models/system_snapshot.dart';
 import 'package:workfromphone/models/task_stats.dart';
 import 'package:workfromphone/services/system_monitor_session.dart';
+import 'package:workfromphone/theme/app_theme.dart';
+
+/// Metric accent that escalates with load: primary, then warning, then danger.
+Color _usageColor(double percent) => percent >= 90
+    ? AppColors.dangerText
+    : percent >= 75
+    ? AppColors.warning
+    : AppColors.primary;
 
 class ProjectSystemTab extends StatefulWidget {
   final String backendUrl;
@@ -143,8 +151,8 @@ class _ProjectSystemTabState extends State<ProjectSystemTab> {
                     const CircularProgressIndicator()
                   else
                     Icon(
-                      CupertinoIcons.heart,
-                      size: 54,
+                      CupertinoIcons.gauge,
+                      size: 48,
                       color: Theme.of(context).colorScheme.primary,
                     ),
                   const SizedBox(height: 18),
@@ -226,7 +234,7 @@ class _ProjectSystemTabState extends State<ProjectSystemTab> {
                   progress: snapshot.cpu.usagePercent / 100,
                   history: _cpuHistory,
                   icon: CupertinoIcons.gear,
-                  color: Colors.blue,
+                  color: _usageColor(snapshot.cpu.usagePercent),
                 ),
                 _MetricCard(
                   key: const Key('system-memory-card'),
@@ -238,7 +246,7 @@ class _ProjectSystemTabState extends State<ProjectSystemTab> {
                   progress: snapshot.memory.usagePercent / 100,
                   history: _memoryHistory,
                   icon: CupertinoIcons.archivebox,
-                  color: Colors.purple,
+                  color: _usageColor(snapshot.memory.usagePercent),
                 ),
                 _MetricCard(
                   width: width,
@@ -248,7 +256,7 @@ class _ProjectSystemTabState extends State<ProjectSystemTab> {
                       '↓ ${_formatRate(snapshot.network.receivedBytesPerSecond)}  ↑ ${_formatRate(snapshot.network.sentBytesPerSecond)}',
                   history: _networkHistory,
                   icon: CupertinoIcons.arrow_up_arrow_down_circle,
-                  color: Colors.teal,
+                  color: AppColors.primary,
                 ),
                 _MetricCard(
                   width: width,
@@ -263,7 +271,7 @@ class _ProjectSystemTabState extends State<ProjectSystemTab> {
                       : primaryDisk.usagePercent / 100,
                   history: _diskHistory,
                   icon: CupertinoIcons.archivebox,
-                  color: Colors.orange,
+                  color: _usageColor(primaryDisk?.usagePercent ?? 0),
                 ),
               ],
             );
@@ -627,13 +635,22 @@ class _HostHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        CircleAvatar(
-          backgroundColor: connected
-              ? Colors.green.withValues(alpha: 0.14)
-              : Colors.orange.withValues(alpha: 0.14),
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: (connected ? AppColors.success : AppColors.warning)
+                .withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+            border: Border.all(
+              color: (connected ? AppColors.success : AppColors.warning)
+                  .withValues(alpha: 0.35),
+            ),
+          ),
           child: Icon(
             CupertinoIcons.desktopcomputer,
-            color: connected ? Colors.green : Colors.orange,
+            size: 20,
+            color: connected ? AppColors.success : AppColors.warning,
           ),
         ),
         const SizedBox(width: 10),

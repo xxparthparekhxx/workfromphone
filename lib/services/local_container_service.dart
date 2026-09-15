@@ -19,6 +19,7 @@ class OnDeviceStatus {
   final int port;
   final bool healthy;
   final bool prootFound;
+  final bool prootRuntimeReady;
   final String workspace;
   final String abi;
 
@@ -29,18 +30,21 @@ class OnDeviceStatus {
     required this.port,
     required this.healthy,
     required this.prootFound,
+    required this.prootRuntimeReady,
     required this.workspace,
     required this.abi,
   });
 
   factory OnDeviceStatus.fromMap(Map<dynamic, dynamic> map) {
+    final prootFound = map['prootFound'] as bool? ?? false;
     return OnDeviceStatus(
       installed: map['installed'] as bool? ?? false,
       version: map['version'] as String?,
       running: map['running'] as bool? ?? false,
       port: (map['port'] as num?)?.toInt() ?? 8000,
       healthy: map['healthy'] as bool? ?? false,
-      prootFound: map['prootFound'] as bool? ?? false,
+      prootFound: prootFound,
+      prootRuntimeReady: map['prootRuntimeReady'] as bool? ?? prootFound,
       workspace: map['workspace'] as String? ?? '',
       abi: map['abi'] as String? ?? 'unknown',
     );
@@ -136,6 +140,21 @@ class LocalContainerService {
 
   static Future<void> stop() async {
     await _channel.invokeMethod('stop');
+  }
+
+  /// Last lines of the guest logs (`backend.log`, `bootstrap.log`) plus a
+  /// native-library inventory so the setup wizard can show why Start/Test
+  /// Connection failed. Returns
+  /// {'backend': ..., 'bootstrap': ..., 'nativeLibs': ...}.
+  static Future<Map<String, String>> getLogs({int maxBytes = 65536}) async {
+    final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>('getLogs', {
+      'maxBytes': maxBytes,
+    });
+    return {
+      'backend': raw?['backend'] as String? ?? '',
+      'bootstrap': raw?['bootstrap'] as String? ?? '',
+      'nativeLibs': raw?['nativeLibs'] as String? ?? '',
+    };
   }
 
   static Future<bool> isBatteryExemptionGranted() async {

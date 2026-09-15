@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:workfromphone/models/project_directory.dart';
 import 'package:workfromphone/services/api_service.dart';
+import 'package:workfromphone/theme/app_theme.dart';
+import 'package:workfromphone/widgets/app_ui.dart';
 
 class DirectoryPickerDialog extends StatefulWidget {
   final String backendUrl;
@@ -22,10 +24,6 @@ class DirectoryPickerDialog extends StatefulWidget {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
       builder: (ctx) => DirectoryPickerDialog(
         backendUrl: backendUrl,
         initialPath: initialPath,
@@ -123,49 +121,7 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
 
   Widget _buildProjectTypeBadge(String? type) {
     if (type == null) return const SizedBox.shrink();
-    Color color = Colors.blueGrey;
-    IconData icon = CupertinoIcons.folder;
-
-    if (type.contains('flutter') || type.contains('dart')) {
-      color = Colors.lightBlue;
-      icon = Icons.flutter_dash;
-    } else if (type.contains('python')) {
-      color = Colors.amber.shade700;
-      icon = CupertinoIcons.command;
-    } else if (type.contains('node') || type.contains('javascript')) {
-      color = Colors.green;
-      icon = Icons.javascript;
-    } else if (type.contains('rust')) {
-      color = Colors.deepOrange;
-      icon = CupertinoIcons.gear;
-    } else if (type.contains('git')) {
-      color = Colors.orange;
-      icon = CupertinoIcons.arrow_up_circle;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.5)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 4),
-          Text(
-            type.toUpperCase(),
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-        ],
-      ),
-    );
+    return ToneBadge(label: type, tone: AppTone.primary);
   }
 
   @override
@@ -385,8 +341,8 @@ class _DirectoryPickerDialogState extends State<DirectoryPickerDialog> {
                           children: [
                             const Icon(
                               CupertinoIcons.exclamationmark_circle,
-                              size: 48,
-                              color: Colors.red,
+                              size: 40,
+                              color: AppColors.dangerText,
                             ),
                             const SizedBox(height: 12),
                             Text(

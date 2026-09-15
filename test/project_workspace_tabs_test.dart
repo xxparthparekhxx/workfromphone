@@ -50,14 +50,14 @@ void main() {
     expect(
       find.descendant(
         of: find.byType(TabBar),
-        matching: find.byIcon(CupertinoIcons.doc_plaintext),
+        matching: find.byIcon(CupertinoIcons.arrow_branch),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: find.byType(TabBar),
-        matching: find.byIcon(CupertinoIcons.heart),
+        matching: find.byIcon(CupertinoIcons.gauge),
       ),
       findsOneWidget,
     );
@@ -70,7 +70,7 @@ void main() {
     );
 
     // Initial Chat view
-    expect(find.text('AI Task Harness Ready'), findsOneWidget);
+    expect(find.text('Start a task'), findsOneWidget);
 
     // Switch to Terminal tab
     await tester.tap(
@@ -105,7 +105,7 @@ void main() {
     await tester.tap(
       find.descendant(
         of: find.byType(TabBar),
-        matching: find.byIcon(CupertinoIcons.doc_plaintext),
+        matching: find.byIcon(CupertinoIcons.arrow_branch),
       ),
     );
     await tester.pumpAndSettle();
@@ -115,7 +115,7 @@ void main() {
     await tester.tap(
       find.descendant(
         of: find.byType(TabBar),
-        matching: find.byIcon(CupertinoIcons.heart),
+        matching: find.byIcon(CupertinoIcons.gauge),
       ),
     );
     await tester.pump();

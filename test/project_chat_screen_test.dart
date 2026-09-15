@@ -24,7 +24,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('test_project'), findsOneWidget);
-    expect(find.text('AI Task Harness Ready'), findsOneWidget);
+    expect(find.text('Start a task'), findsOneWidget);
     expect(find.byType(TextField), findsOneWidget);
     expect(find.byKey(const Key('chat-model-picker')), findsOneWidget);
     expect(

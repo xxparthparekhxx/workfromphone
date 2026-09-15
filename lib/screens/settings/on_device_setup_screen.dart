@@ -198,6 +198,45 @@ class _OnDeviceSetupScreenState extends State<OnDeviceSetupScreen> {
     }
   }
 
+  Future<void> _showLogs() async {
+    String body;
+    try {
+      final logs = await LocalContainerService.getLogs();
+      final backend = (logs['backend'] ?? '').trim();
+      final bootstrap = (logs['bootstrap'] ?? '').trim();
+      final nativeLibs = (logs['nativeLibs'] ?? '').trim();
+      body =
+          '--- native libs ---\n${nativeLibs.isEmpty ? '(empty)' : nativeLibs}\n\n'
+          '--- backend.log ---\n${backend.isEmpty ? '(empty)' : backend}\n\n'
+          '--- bootstrap.log ---\n${bootstrap.isEmpty ? '(empty)' : bootstrap}';
+    } catch (e) {
+      body = 'Could not read logs: $e';
+    }
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Backend logs'),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 380,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              body,
+              style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _testConnection() async {
     setState(() {
       _testing = true;
@@ -400,6 +439,13 @@ class _OnDeviceSetupScreenState extends State<OnDeviceSetupScreen> {
               (status?.prootFound ?? false) ? 'Present' : 'Missing',
               ok: status?.prootFound ?? false,
             ),
+            _statusRow(
+              'proot runtime',
+              (status?.prootRuntimeReady ?? false)
+                  ? 'Ready (talloc + loader)'
+                  : 'Incomplete',
+              ok: status?.prootRuntimeReady ?? false,
+            ),
             if ((status?.workspace ?? '').isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
@@ -408,12 +454,13 @@ class _OnDeviceSetupScreenState extends State<OnDeviceSetupScreen> {
                   style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
                 ),
               ),
-            if (!(status?.prootFound ?? true))
+            if (!(status?.prootRuntimeReady ?? true))
               const Padding(
                 padding: EdgeInsets.only(top: 8),
                 child: Text(
-                  'The app build is missing the patched proot binary '
-                  '(jniLibs). Rebuild after running scripts/fetch-proot.sh.',
+                  'This APK is missing proot\'s runtime libraries '
+                  '(libtalloc / libandroid-shmem / loader). Rebuild the app '
+                  'so scripts/fetch-proot.sh can bundle them.',
                   style: TextStyle(fontSize: 12, color: Colors.orange),
                 ),
               ),
@@ -583,6 +630,16 @@ class _OnDeviceSetupScreenState extends State<OnDeviceSetupScreen> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              key: const Key('ondevice-view-logs'),
+              onPressed: _showLogs,
+              icon: const Icon(CupertinoIcons.doc_text, size: 16),
+              label: const Text(
+                'View backend logs',
+                style: TextStyle(fontSize: 12),
+              ),
             ),
             if (_batteryExemptKnown && !_batteryExempt && running) ...[
               const SizedBox(height: 12),

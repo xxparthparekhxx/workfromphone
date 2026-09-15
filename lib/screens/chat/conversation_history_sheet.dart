@@ -3,6 +3,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:workfromphone/models/conversation_session.dart';
 import 'package:workfromphone/models/project_directory.dart';
 import 'package:workfromphone/services/storage_service.dart';
+import 'package:workfromphone/theme/app_theme.dart';
+import 'package:workfromphone/widgets/app_ui.dart';
 
 class ConversationHistorySheet extends StatefulWidget {
   final ProjectDirectory project;
@@ -29,9 +31,6 @@ class ConversationHistorySheet extends StatefulWidget {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
       builder: (_) => ConversationHistorySheet(
         project: project,
         activeConversationId: activeConversationId,
@@ -77,10 +76,7 @@ class _ConversationHistorySheetState extends State<ConversationHistorySheet> {
         content: TextField(
           controller: textCtrl,
           autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Conversation Title',
-            border: OutlineInputBorder(),
-          ),
+          decoration: const InputDecoration(labelText: 'Conversation Title'),
         ),
         actions: [
           TextButton(
@@ -117,7 +113,10 @@ class _ConversationHistorySheetState extends State<ConversationHistorySheet> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+              foregroundColor: Theme.of(ctx).colorScheme.onError,
+            ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Delete'),
           ),
@@ -139,6 +138,9 @@ class _ConversationHistorySheetState extends State<ConversationHistorySheet> {
       return c.title.toLowerCase().contains(q) ||
           c.previewSnippet.toLowerCase().contains(q);
     }).toList();
+    final metaStyle = theme.textTheme.bodySmall?.copyWith(
+      color: AppColors.textMuted,
+    );
 
     return DraggableScrollableSheet(
       initialChildSize: 0.8,
@@ -148,335 +150,213 @@ class _ConversationHistorySheetState extends State<ConversationHistorySheet> {
       builder: (ctx, scrollCtrl) {
         return Column(
           children: [
-            // Handle pill
+            const SizedBox(height: AppSpace.sm),
             Container(
-              margin: const EdgeInsets.only(top: 10, bottom: 6),
-              width: 36,
+              width: 32,
               height: 4,
               decoration: BoxDecoration(
-                color: theme.colorScheme.outlineVariant,
-                borderRadius: BorderRadius.circular(2),
+                color: AppColors.borderStrong,
+                borderRadius: BorderRadius.circular(AppRadius.xs),
               ),
             ),
-
-            // Top Header: Title + New Conversation Button
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
-                children: [
-                  Icon(
-                    CupertinoIcons.bubble_left,
-                    color: theme.colorScheme.primary,
-                    size: 22,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Conversations',
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          '${widget.project.name} (${_conversations.length})',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                  FilledButton.icon(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      widget.onNewConversation();
-                    },
-                    icon: const Icon(CupertinoIcons.add, size: 16),
-                    label: const Text('New Chat'),
-                    style: FilledButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ),
-                ],
-              ),
+            const SizedBox(height: AppSpace.md),
+            SheetHeader(
+              title: 'Conversations',
+              subtitle: '${widget.project.name} · ${_conversations.length}',
+              actions: [
+                FilledButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    widget.onNewConversation();
+                  },
+                  icon: const Icon(CupertinoIcons.add, size: 16),
+                  label: const Text('New Chat'),
+                ),
+                const SizedBox(width: AppSpace.sm),
+              ],
             ),
 
-            // Search Bar
             if (_conversations.length > 2)
               Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 4,
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpace.lg,
+                  0,
+                  AppSpace.lg,
+                  AppSpace.md,
                 ),
                 child: TextField(
-                  decoration: InputDecoration(
-                    isDense: true,
-                    hintText: 'Search conversations...',
-                    prefixIcon: const Icon(CupertinoIcons.search, size: 18),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 8,
-                    ),
+                  decoration: const InputDecoration(
+                    hintText: 'Search conversations',
+                    prefixIcon: Icon(CupertinoIcons.search, size: 16),
                   ),
                   onChanged: (v) => setState(() => _searchQuery = v),
                 ),
               ),
 
-            const Divider(height: 1),
+            const Divider(),
 
-            // Conversations List
             Expanded(
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : filtered.isEmpty
                   ? Center(
                       child: Padding(
-                        padding: const EdgeInsets.all(24.0),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              CupertinoIcons.chat_bubble,
-                              size: 48,
-                              color: theme.colorScheme.onSurfaceVariant
-                                  .withValues(alpha: 0.5),
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              _searchQuery.isEmpty
-                                  ? 'No conversations yet'
-                                  : 'No conversations match "$_searchQuery"',
-                              style: TextStyle(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            OutlinedButton.icon(
-                              onPressed: () {
-                                Navigator.pop(ctx);
-                                widget.onNewConversation();
-                              },
-                              icon: const Icon(CupertinoIcons.add),
-                              label: const Text('Start First Chat'),
-                            ),
-                          ],
+                        padding: const EdgeInsets.all(AppSpace.xl),
+                        child: EmptyState(
+                          icon: CupertinoIcons.chat_bubble,
+                          title: _searchQuery.isEmpty
+                              ? 'No conversations yet'
+                              : 'No conversations match "$_searchQuery"',
+                          action: _searchQuery.isEmpty
+                              ? OutlinedButton.icon(
+                                  onPressed: () {
+                                    Navigator.pop(ctx);
+                                    widget.onNewConversation();
+                                  },
+                                  icon: const Icon(
+                                    CupertinoIcons.add,
+                                    size: 16,
+                                  ),
+                                  label: const Text('Start First Chat'),
+                                )
+                              : null,
                         ),
                       ),
                     )
                   : ListView.separated(
                       controller: scrollCtrl,
-                      padding: const EdgeInsets.all(12),
                       itemCount: filtered.length,
-                      separatorBuilder: (context, index) =>
-                          const SizedBox(height: 8),
+                      separatorBuilder: (context, index) => const Divider(),
                       itemBuilder: (context, idx) {
                         final session = filtered[idx];
                         final isActive =
                             session.id == widget.activeConversationId;
 
-                        return Card(
-                          elevation: 0,
-                          margin: EdgeInsets.zero,
+                        return Material(
                           color: isActive
-                              ? theme.colorScheme.primaryContainer.withValues(
-                                  alpha: 0.35,
-                                )
-                              : theme.colorScheme.surfaceContainerLow,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: BorderSide(
-                              color: isActive
-                                  ? theme.colorScheme.primary
-                                  : theme.colorScheme.outlineVariant.withValues(
-                                      alpha: 0.4,
-                                    ),
-                              width: isActive ? 1.5 : 1,
-                            ),
-                          ),
+                              ? AppColors.primaryTint
+                              : Colors.transparent,
                           child: InkWell(
-                            borderRadius: BorderRadius.circular(12),
                             onTap: () {
                               Navigator.pop(ctx);
                               widget.onSelectConversation(session);
                             },
-                            child: Padding(
-                              padding: const EdgeInsets.all(12.0),
-                              child: Column(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                border: Border(
+                                  left: BorderSide(
+                                    color: isActive
+                                        ? AppColors.primary
+                                        : Colors.transparent,
+                                    width: 2,
+                                  ),
+                                ),
+                              ),
+                              padding: const EdgeInsets.fromLTRB(
+                                AppSpace.lg - 2,
+                                AppSpace.md,
+                                AppSpace.xs,
+                                AppSpace.md,
+                              ),
+                              child: Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  // Top Row: Title + Active Badge + Menu
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          session.title,
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 14,
-                                            color: isActive
-                                                ? theme.colorScheme.primary
-                                                : null,
-                                          ),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Flexible(
+                                              child: Text(
+                                                session.title,
+                                                style: theme
+                                                    .textTheme
+                                                    .titleSmall
+                                                    ?.copyWith(
+                                                      color: isActive
+                                                          ? AppColors.primary
+                                                          : null,
+                                                    ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                            if (isActive) ...[
+                                              const SizedBox(
+                                                width: AppSpace.sm,
+                                              ),
+                                              const ToneBadge(
+                                                label: 'Active',
+                                                tone: AppTone.primary,
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          session.previewSnippet,
+                                          style: theme.textTheme.bodySmall,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        const SizedBox(height: AppSpace.sm),
+                                        Text(
+                                          '${session.messages.length} msgs · '
+                                          '${session.formattedTime} · '
+                                          '${session.model.split('/').last}',
+                                          style: metaStyle,
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                         ),
-                                      ),
-                                      if (isActive) ...[
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 6,
-                                            vertical: 1.5,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: theme.colorScheme.primary,
-                                            borderRadius: BorderRadius.circular(
-                                              4,
-                                            ),
-                                          ),
-                                          child: const Text(
-                                            'ACTIVE',
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 9,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 4),
                                       ],
-                                      PopupMenuButton<String>(
-                                        icon: const Icon(
-                                          CupertinoIcons.ellipsis,
-                                          size: 18,
-                                        ),
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(),
-                                        onSelected: (val) {
-                                          if (val == 'rename') {
-                                            _renameConversation(session);
-                                          } else if (val == 'delete') {
-                                            _deleteConversation(session);
-                                          }
-                                        },
-                                        itemBuilder: (_) => [
-                                          const PopupMenuItem(
-                                            value: 'rename',
-                                            child: Row(
-                                              children: [
-                                                Icon(
-                                                  CupertinoIcons.pencil,
-                                                  size: 16,
-                                                ),
-                                                SizedBox(width: 8),
-                                                Text('Rename'),
-                                              ],
-                                            ),
-                                          ),
-                                          const PopupMenuItem(
-                                            value: 'delete',
-                                            child: Row(
-                                              children: [
-                                                Icon(
-                                                  CupertinoIcons.trash,
-                                                  size: 16,
-                                                  color: Colors.red,
-                                                ),
-                                                SizedBox(width: 8),
-                                                Text(
-                                                  'Delete',
-                                                  style: TextStyle(
-                                                    color: Colors.red,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-
-                                  const SizedBox(height: 4),
-
-                                  // Snippet Preview
-                                  Text(
-                                    session.previewSnippet,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: theme.colorScheme.onSurfaceVariant,
                                     ),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
                                   ),
-
-                                  const SizedBox(height: 8),
-
-                                  // Bottom Row: Metadata Chips
-                                  Row(
-                                    children: [
-                                      Icon(
-                                        CupertinoIcons.chat_bubble,
-                                        size: 12,
-                                        color:
-                                            theme.colorScheme.onSurfaceVariant,
-                                      ),
-                                      const SizedBox(width: 3),
-                                      Text(
-                                        '${session.messages.length} msgs',
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          color: theme
-                                              .colorScheme
-                                              .onSurfaceVariant,
+                                  PopupMenuButton<String>(
+                                    tooltip: 'Conversation actions',
+                                    icon: const Icon(
+                                      CupertinoIcons.ellipsis,
+                                      size: 18,
+                                    ),
+                                    onSelected: (val) {
+                                      if (val == 'rename') {
+                                        _renameConversation(session);
+                                      } else if (val == 'delete') {
+                                        _deleteConversation(session);
+                                      }
+                                    },
+                                    itemBuilder: (_) => const [
+                                      PopupMenuItem(
+                                        value: 'rename',
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              CupertinoIcons.pencil,
+                                              size: 16,
+                                            ),
+                                            SizedBox(width: AppSpace.sm),
+                                            Text('Rename'),
+                                          ],
                                         ),
                                       ),
-                                      const SizedBox(width: 10),
-                                      Icon(
-                                        CupertinoIcons.clock,
-                                        size: 12,
-                                        color:
-                                            theme.colorScheme.onSurfaceVariant,
-                                      ),
-                                      const SizedBox(width: 3),
-                                      Text(
-                                        session.formattedTime,
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          color: theme
-                                              .colorScheme
-                                              .onSurfaceVariant,
-                                        ),
-                                      ),
-                                      const Spacer(),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 1,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: theme
-                                              .colorScheme
-                                              .surfaceContainerHighest,
-                                          borderRadius: BorderRadius.circular(
-                                            4,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          session.model.split('/').last,
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            fontFamily: 'monospace',
-                                            color: theme
-                                                .colorScheme
-                                                .onSurfaceVariant,
-                                          ),
+                                      PopupMenuItem(
+                                        value: 'delete',
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              CupertinoIcons.trash,
+                                              size: 16,
+                                              color: AppColors.dangerText,
+                                            ),
+                                            SizedBox(width: AppSpace.sm),
+                                            Text(
+                                              'Delete',
+                                              style: TextStyle(
+                                                color: AppColors.dangerText,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ],

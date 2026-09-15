@@ -3,6 +3,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:workfromphone/models/git_status.dart';
 import 'package:workfromphone/models/project_directory.dart';
 import 'package:workfromphone/services/api_service.dart';
+import 'package:workfromphone/theme/app_theme.dart';
+import 'package:workfromphone/widgets/app_ui.dart';
 import 'package:workfromphone/widgets/git_diff_view.dart';
 import 'package:workfromphone/widgets/material_file_icon.dart';
 
@@ -88,9 +90,6 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
       builder: (ctx) {
         return DraggableScrollableSheet(
           initialChildSize: 0.85,
@@ -201,12 +200,7 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
       _loadStatus();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Stage failed: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        showAppSnackBar(context, 'Stage failed: $e', tone: AppTone.danger);
       }
     }
   }
@@ -221,12 +215,7 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
       _loadStatus();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Unstage failed: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        showAppSnackBar(context, 'Unstage failed: $e', tone: AppTone.danger);
       }
     }
   }
@@ -245,7 +234,9 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.dangerText,
+            ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Discard'),
           ),
@@ -263,12 +254,7 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
         _loadStatus();
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Discard failed: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
+          showAppSnackBar(context, 'Discard failed: $e', tone: AppTone.danger);
         }
       }
     }
@@ -308,12 +294,7 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
       _loadStatus();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Commit failed: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        showAppSnackBar(context, 'Commit failed: $e', tone: AppTone.danger);
       }
     } finally {
       if (mounted) {
@@ -342,12 +323,7 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
       _loadStatus();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Push failed: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        showAppSnackBar(context, 'Push failed: $e', tone: AppTone.danger);
       }
     } finally {
       if (mounted) setState(() => _isSyncing = false);
@@ -372,12 +348,7 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
       _loadStatus();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Pull failed: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        showAppSnackBar(context, 'Pull failed: $e', tone: AppTone.danger);
       }
     } finally {
       if (mounted) setState(() => _isSyncing = false);
@@ -386,10 +357,11 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
 
   Widget _buildFileRow(GitFileItem file, {required bool isStaged}) {
     final theme = Theme.of(context);
-    Color statusColor = Colors.amber;
-    if (file.status == 'U' || file.status == 'A') statusColor = Colors.green;
-    if (file.status == 'D') statusColor = Colors.red;
-    if (file.status == 'M') statusColor = Colors.amber.shade700;
+    final statusColor = switch (file.status) {
+      'U' || 'A' => AppColors.success,
+      'D' => AppColors.dangerText,
+      _ => AppColors.warning,
+    };
 
     return InkWell(
       onTap: () => _showDiffModal(file.path, staged: isStaged),
@@ -481,27 +453,18 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
     if (_errorMessage != null && _status == null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                CupertinoIcons.exclamationmark_circle,
-                size: 48,
-                color: Colors.red,
-              ),
-              const SizedBox(height: 12),
-              Text('Git Error', style: theme.textTheme.titleMedium),
-              const SizedBox(height: 6),
-              Text(_errorMessage!, textAlign: TextAlign.center),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                key: const Key('git-retry-button'),
-                onPressed: _loadStatus,
-                icon: const Icon(CupertinoIcons.refresh),
-                label: const Text('Retry'),
-              ),
-            ],
+          padding: const EdgeInsets.all(AppSpace.xl),
+          child: EmptyState(
+            icon: CupertinoIcons.exclamationmark_circle,
+            tone: AppTone.danger,
+            title: 'Git error',
+            message: _errorMessage,
+            action: FilledButton.icon(
+              key: const Key('git-retry-button'),
+              onPressed: _loadStatus,
+              icon: const Icon(CupertinoIcons.refresh, size: 16),
+              label: const Text('Retry'),
+            ),
           ),
         ),
       );
@@ -510,37 +473,24 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
     if (_status != null && !_status!.isRepo) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                CupertinoIcons.doc_plaintext,
-                size: 54,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(height: 12),
-              Text('Not a Git Repository', style: theme.textTheme.titleMedium),
-              const SizedBox(height: 6),
-              Text(
-                'This folder is not initialized with Git.',
-                style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                key: const Key('git-init-button'),
-                onPressed: () async {
-                  await ApiService.runTerminalCommand(
-                    widget.backendUrl,
-                    projectPath: widget.project.path,
-                    command: 'git init',
-                  );
-                  _loadStatus();
-                },
-                icon: const Icon(CupertinoIcons.add),
-                label: const Text('Initialize Git Repository'),
-              ),
-            ],
+          padding: const EdgeInsets.all(AppSpace.xl),
+          child: EmptyState(
+            icon: CupertinoIcons.arrow_branch,
+            title: 'Not a Git repository',
+            message: 'This folder is not initialized with Git.',
+            action: FilledButton.icon(
+              key: const Key('git-init-button'),
+              onPressed: () async {
+                await ApiService.runTerminalCommand(
+                  widget.backendUrl,
+                  projectPath: widget.project.path,
+                  command: 'git init',
+                );
+                _loadStatus();
+              },
+              icon: const Icon(CupertinoIcons.add, size: 16),
+              label: const Text('Initialize Git Repository'),
+            ),
           ),
         ),
       );
@@ -558,16 +508,6 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
         children: [
           // Branch & Sync Card
           Card(
-            elevation: 0,
-            color: theme.colorScheme.surfaceContainerHighest.withValues(
-              alpha: 0.5,
-            ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-              side: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-              ),
-            ),
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
@@ -637,13 +577,6 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
 
           // Commit Box
           Card(
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-              side: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-              ),
-            ),
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
@@ -671,10 +604,7 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
                           ? const SizedBox(
                               width: 14,
                               height: 14,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(CupertinoIcons.check_mark, size: 18),
                       label: Text(
@@ -693,58 +623,17 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
 
           // Staged Changes Header
           if (staged.isNotEmpty) ...[
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-              child: Row(
-                children: [
-                  Text(
-                    'STAGED CHANGES',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
-                      color: theme.colorScheme.primary,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 1,
-                    ),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      '${staged.length}',
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.bold,
-                        color: theme.colorScheme.onPrimaryContainer,
-                      ),
-                    ),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(CupertinoIcons.minus_circle, size: 16),
-                    tooltip: 'Unstage All',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () => _unstage(null),
-                  ),
-                ],
+            SectionLabel(
+              'Staged changes',
+              count: staged.length,
+              trailing: IconButton(
+                icon: const Icon(CupertinoIcons.minus_circle, size: 16),
+                tooltip: 'Unstage All',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => _unstage(null),
               ),
             ),
             Card(
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-                side: BorderSide(
-                  color: theme.colorScheme.outlineVariant.withValues(
-                    alpha: 0.3,
-                  ),
-                ),
-              ),
               child: ListView.separated(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -758,91 +647,47 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
           ],
 
           // Changes & Untracked Files Header
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-            child: Row(
-              children: [
-                Text(
-                  'CHANGES',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.5,
-                    color: theme.colorScheme.onSurfaceVariant,
+          SectionLabel(
+            'Changes',
+            count: allChanges.length,
+            trailing: allChanges.isEmpty
+                ? null
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(
+                          CupertinoIcons.arrow_uturn_left,
+                          size: 16,
+                        ),
+                        tooltip: 'Discard All Changes',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () =>
+                            _discard(allChanges.map((f) => f.path).toList()),
+                      ),
+                      IconButton(
+                        icon: const Icon(CupertinoIcons.add_circled, size: 16),
+                        tooltip: 'Stage All',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => _stage(null),
+                      ),
+                    ],
                   ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 1,
-                  ),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '${allChanges.length}',
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.bold,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                const Spacer(),
-                if (allChanges.isNotEmpty) ...[
-                  IconButton(
-                    icon: const Icon(CupertinoIcons.arrow_uturn_left, size: 16),
-                    tooltip: 'Discard All Changes',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () =>
-                        _discard(allChanges.map((f) => f.path).toList()),
-                  ),
-                  IconButton(
-                    icon: const Icon(CupertinoIcons.add_circled, size: 16),
-                    tooltip: 'Stage All',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () => _stage(null),
-                  ),
-                ],
-              ],
-            ),
           ),
 
           if (allChanges.isEmpty && staged.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(32),
-              alignment: Alignment.center,
-              child: Column(
-                children: [
-                  Icon(
-                    CupertinoIcons.check_mark_circled,
-                    size: 40,
-                    color: Colors.green.withValues(alpha: 0.7),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Working tree clean',
-                    style: TextStyle(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
+            const Padding(
+              padding: EdgeInsets.all(AppSpace.xl),
+              child: Center(
+                child: EmptyState(
+                  icon: CupertinoIcons.check_mark_circled,
+                  tone: AppTone.success,
+                  title: 'Working tree clean',
+                ),
               ),
             )
           else
             Card(
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-                side: BorderSide(
-                  color: theme.colorScheme.outlineVariant.withValues(
-                    alpha: 0.3,
-                  ),
-                ),
-              ),
               child: ListView.separated(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),

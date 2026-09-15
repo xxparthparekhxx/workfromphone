@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workfromphone/main.dart';
@@ -16,8 +17,8 @@ void main() {
 
       // 1. Verify Projects tab is initially active
       expect(find.text('Projects'), findsWidgets);
-      expect(find.text('Work on PC Project'), findsOneWidget);
-      expect(find.text('Browse & Select Project Directory'), findsOneWidget);
+      expect(find.text('Open a project'), findsOneWidget);
+      expect(find.text('Browse folders'), findsOneWidget);
 
       // 2. Switch to Assistant (General Chat) tab
       final assistantNavDestination = find.byIcon(CupertinoIcons.sparkles);
@@ -25,8 +26,11 @@ void main() {
       await tester.tap(assistantNavDestination);
       await tester.pumpAndSettle();
 
-      expect(find.text('AI General Assistant'), findsOneWidget);
-      expect(find.text('Web Search OFF'), findsOneWidget);
+      expect(find.text('Ask anything'), findsWidgets);
+      final webSearchChip = find.byKey(
+        const Key('general-chat-web-search-chip'),
+      );
+      expect(tester.widget<FilterChip>(webSearchChip).selected, isFalse);
 
       // 3. Switch to Settings tab
       final settingsNavDestination = find.byIcon(CupertinoIcons.settings);
@@ -34,22 +38,22 @@ void main() {
       await tester.tap(settingsNavDestination);
       await tester.pumpAndSettle();
 
-      expect(find.text('Settings & Harness'), findsOneWidget);
-      expect(find.text('PC Backend Connection'), findsOneWidget);
+      expect(find.widgetWithText(AppBar, 'Settings'), findsOneWidget);
+      expect(find.text('BACKEND'), findsOneWidget);
 
       await tester.scrollUntilVisible(
-        find.text('Dedicated Cloud Hub (Optional)'),
+        find.text('AI PROVIDER'),
         100,
         scrollable: find.byType(Scrollable).first,
       );
-      expect(find.text('Dedicated Cloud Hub (Optional)'), findsOneWidget);
+      expect(find.text('AI PROVIDER'), findsOneWidget);
 
       await tester.scrollUntilVisible(
-        find.text('LLM Provider & Router'),
+        find.text('CLOUD HUB · OPTIONAL'),
         100,
         scrollable: find.byType(Scrollable).first,
       );
-      expect(find.text('LLM Provider & Router'), findsOneWidget);
+      expect(find.text('CLOUD HUB · OPTIONAL'), findsOneWidget);
 
       // 4. Switch back to Projects tab
       final projectsNavDestination = find.byIcon(CupertinoIcons.folder);
@@ -57,7 +61,7 @@ void main() {
       await tester.tap(projectsNavDestination);
       await tester.pumpAndSettle();
 
-      expect(find.text('Work on PC Project'), findsOneWidget);
+      expect(find.text('Open a project'), findsOneWidget);
     },
   );
 }

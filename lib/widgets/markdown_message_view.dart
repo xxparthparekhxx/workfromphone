@@ -76,7 +76,7 @@ class MarkdownMessageView extends StatelessWidget {
 
     final baseStyle =
         textStyle ??
-        TextStyle(color: defaultTextColor, fontSize: 14.5, height: 1.45);
+        TextStyle(color: defaultTextColor, fontSize: 14, height: 1.55);
 
     final codeBlockBackground = isDark
         ? theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.7)
@@ -92,7 +92,7 @@ class MarkdownMessageView extends StatelessWidget {
         textColor: codeBlockTextColor,
         borderColor: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
         borderWidth: 1,
-        borderRadius: const Radius.circular(8),
+        borderRadius: const Radius.circular(4),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         headerPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         showCopyButton: true,
@@ -119,7 +119,7 @@ class MarkdownMessageView extends StatelessWidget {
       ),
       blockQuote: BlockQuoteStyle(
         barColor: theme.colorScheme.primary,
-        barWidth: 3.5,
+        barWidth: 2,
         padding: const EdgeInsets.only(left: 12, top: 4, bottom: 4),
       ),
       table: TableStyle(

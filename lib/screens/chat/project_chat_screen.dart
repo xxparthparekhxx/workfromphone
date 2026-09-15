@@ -23,6 +23,8 @@ import 'package:workfromphone/services/chat_composer_service.dart';
 import 'package:workfromphone/services/chat_service.dart';
 import 'package:workfromphone/services/preview_session.dart';
 import 'package:workfromphone/services/storage_service.dart';
+import 'package:workfromphone/theme/app_theme.dart';
+import 'package:workfromphone/widgets/app_ui.dart';
 import 'package:workfromphone/widgets/markdown_message_view.dart';
 import 'package:workfromphone/widgets/model_picker_sheet.dart';
 import 'package:workfromphone/widgets/task_stats_bar.dart';
@@ -271,9 +273,10 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
-          FilledButton.tonal(
+          FilledButton(
             style: FilledButton.styleFrom(
-              foregroundColor: Theme.of(ctx).colorScheme.error,
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+              foregroundColor: Theme.of(ctx).colorScheme.onError,
             ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Delete'),
@@ -288,11 +291,10 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
       });
       await _saveCurrentSession();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Message deleted'),
-            duration: Duration(seconds: 1),
-          ),
+        showAppSnackBar(
+          context,
+          'Message deleted',
+          duration: const Duration(seconds: 1),
         );
       }
     }
@@ -330,11 +332,10 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
       });
       await _saveCurrentSession();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Conversation cleared'),
-            duration: Duration(seconds: 1),
-          ),
+        showAppSnackBar(
+          context,
+          'Conversation cleared',
+          duration: const Duration(seconds: 1),
         );
       }
     }
@@ -731,9 +732,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
   }
 
   void _showComposerMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-    );
+    showAppSnackBar(context, message);
   }
 
   Future<void> _handleManualPreviewRegister(String arguments) async {
@@ -787,24 +786,22 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
       builder: (context) => SafeArea(
         child: ListView(
           shrinkWrap: true,
-          padding: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.only(bottom: AppSpace.md),
           children: [
-            const ListTile(
-              title: Text(
-                'Chat commands',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              subtitle: Text('Type a command in the message box.'),
+            const SheetHeader(
+              title: 'Chat commands',
+              subtitle: 'Type a command in the message box.',
             ),
+            const Divider(),
             for (final command in ChatComposerService.commands)
               ListTile(
                 dense: true,
-                leading: const Icon(CupertinoIcons.command, size: 20),
+                leading: const Icon(CupertinoIcons.command, size: 18),
                 title: Text(
                   '/${command.name}',
                   style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primary,
                   ),
                 ),
                 subtitle: Text(command.description),
@@ -894,154 +891,108 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
     );
   }
 
+  String get _modelLabel =>
+      _llmConfig.model.split('/').lastOrNull ?? _llmConfig.model;
+
   Widget _buildToolEventCard(ToolEvent event) {
-    final theme = Theme.of(context);
     final output = event.output;
     final hasOutput = output != null && output.isNotEmpty;
 
-    return Card(
-      elevation: 0,
-      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-        side: BorderSide(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-        ),
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: AppSpace.xs),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        border: Border.all(color: AppColors.border),
       ),
       child: ExpansionTile(
         initiallyExpanded: event.isExecuting,
-        tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        tilePadding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
         leading: event.isExecuting
             ? const SizedBox(
-                width: 16,
-                height: 16,
+                width: 14,
+                height: 14,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : Icon(
                 event.isError
                     ? CupertinoIcons.exclamationmark_circle
                     : CupertinoIcons.check_mark_circled,
-                size: 18,
-                color: event.isError ? Colors.red : Colors.green,
+                size: 16,
+                color: event.isError ? AppColors.dangerText : AppColors.success,
               ),
         title: Text(
           event.summary,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(
             fontSize: 12,
-            fontFamily: 'monospace',
-            fontWeight: FontWeight.w600,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
           ),
         ),
         children: [
           if (hasOutput)
-            Container(
-              margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.9),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.1),
-                  width: 1,
-                ),
+            DecoratedBox(
+              decoration: const BoxDecoration(
+                color: AppColors.background,
+                border: Border(top: BorderSide(color: AppColors.border)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Top bar with line count and copy button
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.05),
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(8),
-                      ),
-                      border: Border(
-                        bottom: BorderSide(
-                          color: Colors.white.withValues(alpha: 0.08),
-                        ),
-                      ),
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      left: AppSpace.md,
+                      right: AppSpace.xs,
                     ),
                     child: Row(
                       children: [
-                        const Icon(
-                          CupertinoIcons.command,
-                          size: 12,
-                          color: Colors.greenAccent,
-                        ),
-                        const SizedBox(width: 6),
                         Text(
                           '${output.split('\n').length} lines',
-                          style: TextStyle(
-                            fontSize: 10.5,
-                            fontFamily: 'monospace',
-                            color: Colors.white.withValues(alpha: 0.6),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textMuted,
                           ),
                         ),
                         const Spacer(),
-                        InkWell(
-                          borderRadius: BorderRadius.circular(4),
-                          onTap: () {
+                        CompactIconButton(
+                          icon: CupertinoIcons.doc_on_doc,
+                          tooltip: 'Copy output',
+                          onPressed: () {
                             Clipboard.setData(ClipboardData(text: output));
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Tool output copied to clipboard',
-                                ),
-                                duration: Duration(seconds: 2),
-                                behavior: SnackBarBehavior.floating,
-                              ),
+                            showAppSnackBar(
+                              context,
+                              'Tool output copied to clipboard',
+                              duration: const Duration(seconds: 2),
                             );
                           },
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 4,
-                              vertical: 2,
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  CupertinoIcons.doc_on_doc,
-                                  size: 11,
-                                  color: Colors.white.withValues(alpha: 0.7),
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'Copy',
-                                  style: TextStyle(
-                                    fontSize: 10.5,
-                                    fontFamily: 'monospace',
-                                    color: Colors.white.withValues(alpha: 0.7),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
                         ),
                       ],
                     ),
                   ),
-
-                  // Scrollable output container
-                  Container(
+                  ConstrainedBox(
                     constraints: const BoxConstraints(maxHeight: 220),
                     child: Scrollbar(
                       thumbVisibility: true,
                       child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(10),
+                        padding: const EdgeInsets.fromLTRB(
+                          AppSpace.md,
+                          0,
+                          AppSpace.md,
+                          AppSpace.md,
+                        ),
                         child: SingleChildScrollView(
                           scrollDirection: Axis.horizontal,
                           child: SelectableText(
                             output,
                             style: const TextStyle(
-                              color: Colors.greenAccent,
-                              fontFamily: 'monospace',
-                              fontSize: 11,
-                              height: 1.35,
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
+                              height: 1.4,
                             ),
                           ),
                         ),
@@ -1058,200 +1009,88 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
 
   Widget _buildMessageBubble(ChatMessage msg) {
     final isUser = msg.role == MessageRole.user;
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
 
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-      decoration: BoxDecoration(
-        color: isUser
-            ? (isDark
-                  ? theme.colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.35,
-                    )
-                  : theme.colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.5,
-                    ))
-            : (isDark
-                  ? theme.colorScheme.surfaceContainerLow.withValues(alpha: 0.6)
-                  : theme.colorScheme.surface),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isUser
-              ? theme.colorScheme.outlineVariant.withValues(alpha: 0.45)
-              : theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
-        ),
-      ),
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Header Row: Avatar, Role/Model Label, Actions
-          Row(
-            children: [
-              if (isUser)
-                Container(
-                  width: 22,
-                  height: 22,
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primaryContainer,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    CupertinoIcons.person_fill,
-                    size: 13,
-                    color: theme.colorScheme.onPrimaryContainer,
-                  ),
-                )
-              else
-                ModelProviderAvatar(modelId: _llmConfig.model, size: 22),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  isUser
-                      ? 'You'
-                      : (_llmConfig.model.split('/').lastOrNull ??
-                            _llmConfig.model),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.bold,
-                    color: isUser
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.onSurface,
-                  ),
-                ),
-              ),
-              if (!isUser && msg.isStreaming) ...[
-                const SizedBox(width: 6),
-                const SizedBox(
-                  width: 10,
-                  height: 10,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ],
-              if (msg.content.isNotEmpty && !msg.isStreaming) ...[
-                InkWell(
-                  borderRadius: BorderRadius.circular(6),
-                  onTap: () {
-                    Clipboard.setData(ClipboardData(text: msg.content));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          isUser ? 'Prompt copied' : 'Message copied',
-                        ),
-                        duration: const Duration(seconds: 2),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          CupertinoIcons.doc_on_doc,
-                          size: 12,
-                          color: theme.colorScheme.onSurfaceVariant.withValues(
-                            alpha: 0.8,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Copy',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: theme.colorScheme.onSurfaceVariant
-                                .withValues(alpha: 0.8),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                InkWell(
-                  borderRadius: BorderRadius.circular(6),
-                  onTap: () => _deleteMessage(msg),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          CupertinoIcons.trash,
-                          size: 12,
-                          color: theme.colorScheme.error.withValues(alpha: 0.8),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Delete',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: theme.colorScheme.error.withValues(
-                              alpha: 0.8,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 10),
-
-          // Interleaved chronological elements (Text thoughts, Tool calls, Follow-up explanations)
-          for (final element in msg.elements) ...[
-            if (element is TextChatElement && element.text.isNotEmpty) ...[
-              MarkdownMessageView(
-                data: element.text,
-                isUser: isUser,
-                isStreaming: msg.isStreaming,
-              ),
-              const SizedBox(height: 8),
-            ] else if (element is ToolChatElement) ...[
-              _buildToolEventCard(element.event),
-              const SizedBox(height: 8),
-            ],
-          ],
-
-          // Live status loader
-          if (msg.isStreaming && msg.statusMessage != null) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const SizedBox(
-                  width: 12,
-                  height: 12,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    msg.statusMessage!,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              ],
+    return MessageShell(
+      isUser: isUser,
+      leading: isUser
+          ? const Icon(
+              CupertinoIcons.person_fill,
+              size: 14,
+              color: AppColors.textMuted,
+            )
+          : ModelProviderAvatar(modelId: _llmConfig.model, size: 18),
+      label: isUser ? 'You' : _modelLabel,
+      actions: [
+        if (!isUser && msg.isStreaming)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: AppSpace.sm),
+            child: SizedBox(
+              width: 10,
+              height: 10,
+              child: CircularProgressIndicator(strokeWidth: 1.5),
             ),
+          ),
+        if (msg.content.isNotEmpty && !msg.isStreaming) ...[
+          CompactIconButton(
+            icon: CupertinoIcons.doc_on_doc,
+            tooltip: isUser ? 'Copy prompt' : 'Copy message',
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: msg.content));
+              showAppSnackBar(
+                context,
+                isUser ? 'Prompt copied' : 'Message copied',
+                duration: const Duration(seconds: 2),
+              );
+            },
+          ),
+          CompactIconButton(
+            icon: CupertinoIcons.trash,
+            tooltip: 'Delete message',
+            onPressed: () => _deleteMessage(msg),
+          ),
+        ],
+      ],
+      children: [
+        // Interleaved chronological elements (text, tool calls, follow-ups).
+        for (final element in msg.elements) ...[
+          if (element is TextChatElement && element.text.isNotEmpty) ...[
+            MarkdownMessageView(
+              data: element.text,
+              isUser: isUser,
+              isStreaming: msg.isStreaming,
+            ),
+            const SizedBox(height: AppSpace.sm),
+          ] else if (element is ToolChatElement) ...[
+            _buildToolEventCard(element.event),
+            const SizedBox(height: AppSpace.xs),
           ],
         ],
-      ),
+
+        // Live status loader
+        if (msg.isStreaming && msg.statusMessage != null) ...[
+          const SizedBox(height: AppSpace.xs),
+          Row(
+            children: [
+              const SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(strokeWidth: 1.5),
+              ),
+              const SizedBox(width: AppSpace.sm),
+              Expanded(
+                child: Text(
+                  msg.statusMessage!,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 
@@ -1268,31 +1107,31 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
         ? const <String>[]
         : _matchingProjectFiles(mention.query);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: AppSpace.sm),
       child: Material(
         key: const Key('chat-composer-suggestions'),
-        color: theme.colorScheme.surfaceContainerHigh,
+        color: AppColors.surfaceRaised,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: BorderSide(color: theme.colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          side: const BorderSide(color: AppColors.borderStrong),
         ),
         clipBehavior: Clip.antiAlias,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 220),
           child: ListView(
             shrinkWrap: true,
-            padding: const EdgeInsets.symmetric(vertical: 4),
+            padding: const EdgeInsets.symmetric(vertical: AppSpace.xs),
             children: [
               for (final command in commandSuggestions)
                 ListTile(
                   dense: true,
                   visualDensity: VisualDensity.compact,
-                  leading: const Icon(CupertinoIcons.command, size: 18),
+                  leading: const Icon(CupertinoIcons.command, size: 16),
                   title: Text(
                     '/${command.name}',
                     style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary,
                     ),
                   ),
                   subtitle: Text(command.description),
@@ -1302,8 +1141,8 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
                 const ListTile(
                   dense: true,
                   leading: SizedBox(
-                    width: 18,
-                    height: 18,
+                    width: 16,
+                    height: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                   title: Text('Loading project files...'),
@@ -1313,7 +1152,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
                   _projectFiles.isEmpty)
                 ListTile(
                   dense: true,
-                  leading: const Icon(CupertinoIcons.refresh, size: 18),
+                  leading: const Icon(CupertinoIcons.refresh, size: 16),
                   title: const Text('Could not load project files'),
                   subtitle: Text(_projectFilesError!),
                   onTap: _loadProjectFiles,
@@ -1321,7 +1160,7 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
               else if (mention != null && fileSuggestions.isEmpty)
                 ListTile(
                   dense: true,
-                  leading: const Icon(CupertinoIcons.search, size: 18),
+                  leading: const Icon(CupertinoIcons.search, size: 16),
                   title: Text(
                     mention.query.isEmpty
                         ? 'No project files available'
@@ -1334,23 +1173,144 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
                     key: ValueKey('file-mention-$path'),
                     dense: true,
                     visualDensity: VisualDensity.compact,
-                    leading: const Icon(CupertinoIcons.doc, size: 18),
+                    leading: const Icon(CupertinoIcons.doc, size: 16),
                     title: Text(
                       path,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontFamily: 'monospace'),
                     ),
                     onTap: () => _insertFileMention(mention, path),
                   ),
               if (mention != null && _projectFilesTruncated)
                 const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  padding: EdgeInsets.fromLTRB(
+                    AppSpace.lg,
+                    AppSpace.xs,
+                    AppSpace.lg,
+                    AppSpace.sm,
+                  ),
                   child: Text(
                     'Showing matches from the first 5,000 project files.',
-                    style: TextStyle(fontSize: 11),
+                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                   ),
                 ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatRow(IconData icon, String label, String value) {
+    return ListTile(
+      dense: true,
+      leading: Icon(icon, size: 18),
+      title: Text(label),
+      trailing: Text(
+        value,
+        style: const TextStyle(
+          fontWeight: FontWeight.w700,
+          color: AppColors.textPrimary,
+        ),
+      ),
+    );
+  }
+
+  void _showStatsSheet() {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SheetHeader(
+              title: 'Session statistics',
+              subtitle: _stats.usageIsEstimated
+                  ? 'Token counts are estimated'
+                  : 'Token counts reported by the provider',
+            ),
+            const Divider(),
+            _buildStatRow(
+              CupertinoIcons.bolt,
+              'Generation speed',
+              _stats.formattedTps,
+            ),
+            _buildStatRow(
+              CupertinoIcons.chart_bar,
+              'Context window used',
+              _stats.formattedContextRatio,
+            ),
+            _buildStatRow(
+              CupertinoIcons.clock,
+              'Total duration',
+              _stats.formattedDuration,
+            ),
+            _buildStatRow(
+              CupertinoIcons.hammer,
+              'Tool executions',
+              '${_stats.toolCallsCount}',
+            ),
+            const SizedBox(height: AppSpace.md),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyChat() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpace.lg,
+        AppSpace.xxl,
+        AppSpace.lg,
+        AppSpace.lg,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              EmptyState(
+                icon: CupertinoIcons.chat_bubble_2,
+                tone: AppTone.primary,
+                title: 'Start a task',
+                message:
+                    'The agent can read and edit files, run commands and '
+                    'check git in ${widget.project.name}.',
+              ),
+              const SizedBox(height: AppSpace.xl),
+              const SectionLabel('Try'),
+              PromptSuggestion(
+                icon: CupertinoIcons.compass,
+                label: 'Explain this project',
+                onTap: () => _sendMessage(
+                  'Analyze this project and explain what it does.',
+                ),
+              ),
+              PromptSuggestion(
+                icon: CupertinoIcons.play_arrow,
+                label: 'Run the test suite',
+                onTap: () => _sendMessage(
+                  'Run test suite in this project and report results.',
+                ),
+              ),
+              PromptSuggestion(
+                icon: CupertinoIcons.arrow_branch,
+                label: 'Summarize git changes',
+                onTap: () => _sendMessage(
+                  'Check git status and summarize modified files.',
+                ),
+              ),
+              PromptSuggestion(
+                icon: CupertinoIcons.exclamationmark_triangle,
+                label: 'Find errors and lint issues',
+                onTap: () => _sendMessage(
+                  'Check for any syntax or linting errors in the project.',
+                ),
+              ),
             ],
           ),
         ),
@@ -1361,309 +1321,164 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
   Widget _buildChatTab(ThemeData theme) {
     return Column(
       children: [
-        // Live Task Statistics Bar (TPS, Context Usage, Duration, Tools)
+        // Live task statistics (speed, context usage, duration, tools).
         if (_showStatsBar && (_stats.totalTokens > 0 || _isRunning))
-          TaskStatsBar(
-            stats: _stats,
-            onTap: () {
-              showModalBottomSheet(
-                context: context,
-                builder: (ctx) => Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Session Statistics',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      ListTile(
-                        leading: const Icon(
-                          CupertinoIcons.bolt,
-                          color: Colors.blue,
-                        ),
-                        title: const Text('Generation Speed'),
-                        trailing: Text(
-                          _stats.formattedTps,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      ListTile(
-                        leading: const Icon(
-                          CupertinoIcons.gear,
-                          color: Colors.purple,
-                        ),
-                        title: const Text('Context Window Used'),
-                        trailing: Text(
-                          _stats.formattedContextRatio,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      ListTile(
-                        leading: const Icon(CupertinoIcons.clock),
-                        title: const Text('Total Duration'),
-                        trailing: Text(
-                          _stats.formattedDuration,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      ListTile(
-                        leading: const Icon(CupertinoIcons.hammer),
-                        title: const Text('Tool Executions'),
-                        trailing: Text(
-                          '${_stats.toolCallsCount}',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
+          TaskStatsBar(stats: _stats, onTap: _showStatsSheet),
 
-        // Project chat history or Empty State
-        if (_messages.isEmpty)
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  const SizedBox(height: 20),
-                  CircleAvatar(
-                    radius: 36,
-                    backgroundColor: theme.colorScheme.primaryContainer,
-                    child: Icon(
-                      CupertinoIcons.chat_bubble,
-                      size: 40,
-                      color: theme.colorScheme.primary,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'AI Task Harness Ready',
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Connected to ${widget.project.name} at ${widget.project.path}',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'Quick Prompts:',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    alignment: WrapAlignment.center,
-                    children: [
-                      ActionChip(
-                        avatar: const Icon(CupertinoIcons.compass, size: 16),
-                        label: const Text('Analyze Project Structure'),
-                        onPressed: () => _sendMessage(
-                          'Analyze this project and explain what it does.',
-                        ),
-                      ),
-                      ActionChip(
-                        avatar: const Icon(CupertinoIcons.play_arrow, size: 16),
-                        label: const Text('Run Tests'),
-                        onPressed: () => _sendMessage(
-                          'Run test suite in this project and report results.',
-                        ),
-                      ),
-                      ActionChip(
-                        avatar: const Icon(
-                          CupertinoIcons.arrow_up_circle,
-                          size: 16,
-                        ),
-                        label: const Text('Git Status'),
-                        onPressed: () => _sendMessage(
-                          'Check git status and summarize modified files.',
-                        ),
-                      ),
-                      ActionChip(
-                        avatar: const Icon(
-                          CupertinoIcons.exclamationmark_circle,
-                          size: 16,
-                        ),
-                        label: const Text('Find Errors & Issues'),
-                        onPressed: () => _sendMessage(
-                          'Check for any syntax or linting errors in the project.',
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          )
-        else
-          Expanded(
-            child: Stack(
-              children: [
-                NotificationListener<ScrollNotification>(
-                  onNotification: (notification) {
-                    if (notification is UserScrollNotification) {
-                      if (notification.direction == ScrollDirection.forward) {
-                        if (_autoScroll) {
-                          setState(() => _autoScroll = false);
+        Expanded(
+          child: _messages.isEmpty
+              ? _buildEmptyChat()
+              : Stack(
+                  children: [
+                    NotificationListener<ScrollNotification>(
+                      onNotification: (notification) {
+                        if (notification is UserScrollNotification) {
+                          if (notification.direction ==
+                              ScrollDirection.forward) {
+                            if (_autoScroll) {
+                              setState(() => _autoScroll = false);
+                            }
+                          }
                         }
-                      }
-                    }
-                    if (_scrollCtrl.hasClients) {
-                      final pos = _scrollCtrl.position;
-                      if (pos.pixels >= pos.maxScrollExtent - 40) {
-                        if (!_autoScroll) {
-                          setState(() => _autoScroll = true);
+                        if (_scrollCtrl.hasClients) {
+                          final pos = _scrollCtrl.position;
+                          if (pos.pixels >= pos.maxScrollExtent - 40) {
+                            if (!_autoScroll) {
+                              setState(() => _autoScroll = true);
+                            }
+                          }
                         }
-                      }
-                    }
-                    return false;
-                  },
-                  child: ListView.builder(
-                    controller: _scrollCtrl,
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    itemCount: _messages.length,
-                    itemBuilder: (context, index) {
-                      return _buildMessageBubble(_messages[index]);
-                    },
-                  ),
-                ),
-                if (!_autoScroll)
-                  Positioned(
-                    right: 16,
-                    bottom: 12,
-                    child: Material(
-                      elevation: 3,
-                      shape: const CircleBorder(),
-                      color: theme.colorScheme.surfaceContainerHighest,
-                      child: InkWell(
-                        customBorder: const CircleBorder(),
-                        onTap: () {
-                          setState(() => _autoScroll = true);
-                          _scrollToBottom(force: true, animated: true);
+                        return false;
+                      },
+                      child: ListView.builder(
+                        controller: _scrollCtrl,
+                        padding: const EdgeInsets.symmetric(
+                          vertical: AppSpace.sm,
+                        ),
+                        itemCount: _messages.length,
+                        itemBuilder: (context, index) {
+                          return _buildMessageBubble(_messages[index]);
                         },
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          child: Icon(
-                            CupertinoIcons.chevron_down,
-                            size: 18,
-                            color: theme.colorScheme.primary,
+                      ),
+                    ),
+                    if (!_autoScroll)
+                      Positioned(
+                        right: AppSpace.lg,
+                        bottom: AppSpace.md,
+                        child: Material(
+                          color: AppColors.surfaceOverlay,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(AppRadius.sm),
+                            side: const BorderSide(
+                              color: AppColors.borderStrong,
+                            ),
+                          ),
+                          child: IconButton(
+                            tooltip: 'Scroll to latest',
+                            icon: const Icon(
+                              CupertinoIcons.chevron_down,
+                              size: 16,
+                              color: AppColors.primary,
+                            ),
+                            onPressed: () {
+                              setState(() => _autoScroll = true);
+                              _scrollToBottom(force: true, animated: true);
+                            },
                           ),
                         ),
                       ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-
-        // Chat Input Box
-        SafeArea(
-          child: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surface,
-              border: Border(
-                top: BorderSide(
-                  color: theme.colorScheme.outlineVariant.withValues(
-                    alpha: 0.5,
-                  ),
+                  ],
                 ),
-              ),
+        ),
+
+        // Composer
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpace.md,
+              AppSpace.sm,
+              AppSpace.md,
+              AppSpace.md,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _buildComposerSuggestions(theme),
-                Row(
-                  children: [
-                    ActionChip(
-                      key: const Key('chat-model-picker'),
-                      avatar: ModelProviderAvatar(
-                        modelId: _llmConfig.model,
-                        size: 18,
-                      ),
-                      label: Text(
-                        _llmConfig.model.split('/').lastOrNull ??
-                            _llmConfig.model,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      onPressed: _isRunning ? null : _showModelPicker,
-                    ),
-                    const Spacer(),
-                    Text(
-                      '/ commands  •  @ files',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(
-                      child: TextField(
+                ComposerFrame(
+                  focusNode: _chatFocusNode,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
                         key: const Key('chat-input'),
                         controller: _inputCtrl,
                         focusNode: _chatFocusNode,
                         minLines: 1,
-                        maxLines: 5,
+                        maxLines: 6,
                         textCapitalization: TextCapitalization.sentences,
-                        decoration: InputDecoration(
-                          hintText: 'Ask, use /commands, or mention @files...',
-                          isDense: true,
-                          filled: true,
-                          fillColor: theme.colorScheme.surfaceContainerHighest
-                              .withValues(alpha: 0.5),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(24),
-                            borderSide: BorderSide.none,
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 10,
-                          ),
+                        decoration: composerInputDecoration.copyWith(
+                          hintText: 'Ask, type / for commands, @ for files',
                         ),
                         onSubmitted: (_) => _sendMessage(),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton.filled(
-                      key: const Key('chat-send-button'),
-                      onPressed: _isRunning
-                          ? _stopCurrentTask
-                          : () => _sendMessage(),
-                      icon: Icon(
-                        _isRunning
-                            ? CupertinoIcons.stop
-                            : CupertinoIcons.arrow_up,
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          AppSpace.xs,
+                          0,
+                          AppSpace.xs + 2,
+                          AppSpace.xs + 2,
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: ActionChip(
+                                  key: const Key('chat-model-picker'),
+                                  tooltip: 'Choose model',
+                                  avatar: ModelProviderAvatar(
+                                    modelId: _llmConfig.model,
+                                    size: 16,
+                                  ),
+                                  label: Text(
+                                    _modelLabel,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  side: BorderSide.none,
+                                  backgroundColor: Colors.transparent,
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: _isRunning
+                                      ? null
+                                      : _showModelPicker,
+                                ),
+                              ),
+                            ),
+                            IconButton.filled(
+                              key: const Key('chat-send-button'),
+                              tooltip: _isRunning ? 'Stop task' : 'Send',
+                              onPressed: _isRunning
+                                  ? _stopCurrentTask
+                                  : () => _sendMessage(),
+                              style: _isRunning
+                                  ? IconButton.styleFrom(
+                                      backgroundColor: AppColors.surfaceOverlay,
+                                      foregroundColor: AppColors.dangerText,
+                                    )
+                                  : null,
+                              icon: Icon(
+                                _isRunning
+                                    ? CupertinoIcons.stop_fill
+                                    : CupertinoIcons.arrow_up,
+                                size: 18,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1682,10 +1497,14 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
         titleSpacing: 0,
         title: InkWell(
           onTap: _openConversationHistory,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppRadius.sm),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpace.sm,
+              vertical: AppSpace.xs,
+            ),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
@@ -1696,88 +1515,112 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
                         widget.project.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                        ),
+                        style: theme.textTheme.titleSmall,
                       ),
                     ),
-                    const SizedBox(width: 4),
-                    const Icon(CupertinoIcons.chevron_down, size: 18),
+                    const SizedBox(width: AppSpace.xs),
+                    const Icon(
+                      CupertinoIcons.chevron_down,
+                      size: 12,
+                      color: AppColors.textMuted,
+                    ),
                   ],
                 ),
                 Text(
                   _currentSession?.title ?? 'New Conversation',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontFamily: 'monospace',
-                    color: theme.colorScheme.primary,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: theme.textTheme.bodySmall,
                 ),
               ],
             ),
           ),
         ),
         actions: [
-          if (_messages.isNotEmpty)
-            IconButton(
-              icon: const Icon(CupertinoIcons.trash, size: 18),
-              tooltip: 'Clear Conversation',
-              onPressed: _clearChat,
-            ),
           IconButton(
-            icon: const Icon(CupertinoIcons.bubble_left, size: 20),
-            tooltip: 'All Conversations',
-            onPressed: _openConversationHistory,
-          ),
-          IconButton(
-            icon: const Icon(CupertinoIcons.chat_bubble_2, size: 20),
+            icon: const Icon(CupertinoIcons.square_pencil),
             tooltip: 'New Conversation',
             onPressed: _createNewConversation,
           ),
+          PopupMenuButton<String>(
+            tooltip: 'More actions',
+            icon: const Icon(CupertinoIcons.ellipsis_vertical, size: 18),
+            onSelected: (value) {
+              if (value == 'history') _openConversationHistory();
+              if (value == 'clear') _clearChat();
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(
+                value: 'history',
+                child: Row(
+                  children: [
+                    Icon(CupertinoIcons.clock, size: 16),
+                    SizedBox(width: AppSpace.sm),
+                    Text('All conversations'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'clear',
+                enabled: _messages.isNotEmpty,
+                child: const Row(
+                  children: [
+                    Icon(
+                      CupertinoIcons.trash,
+                      size: 16,
+                      color: AppColors.dangerText,
+                    ),
+                    SizedBox(width: AppSpace.sm),
+                    Text(
+                      'Clear conversation',
+                      style: TextStyle(color: AppColors.dangerText),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: AppSpace.xs),
         ],
         bottom: TabBar(
           controller: _tabController,
-          labelPadding: const EdgeInsets.symmetric(horizontal: 16),
+          labelPadding: const EdgeInsets.symmetric(horizontal: 2),
           tabs: const [
             Tab(
-              icon: Tooltip(
-                message: 'Chat',
-                child: Icon(CupertinoIcons.chat_bubble, size: 20),
-              ),
+              height: 52,
+              iconMargin: EdgeInsets.only(bottom: 3),
+              icon: Icon(CupertinoIcons.chat_bubble, size: 18),
+              text: 'Chat',
             ),
             Tab(
-              icon: Tooltip(
-                message: 'Terminal',
-                child: Icon(CupertinoIcons.command, size: 20),
-              ),
+              height: 52,
+              iconMargin: EdgeInsets.only(bottom: 3),
+              icon: Icon(CupertinoIcons.command, size: 18),
+              text: 'Terminal',
             ),
             Tab(
-              icon: Tooltip(
-                message: 'Files',
-                child: Icon(CupertinoIcons.folder, size: 20),
-              ),
+              height: 52,
+              iconMargin: EdgeInsets.only(bottom: 3),
+              icon: Icon(CupertinoIcons.folder, size: 18),
+              text: 'Files',
             ),
             Tab(
-              icon: Tooltip(
-                message: 'Git',
-                child: Icon(CupertinoIcons.doc_plaintext, size: 20),
-              ),
+              height: 52,
+              iconMargin: EdgeInsets.only(bottom: 3),
+              icon: Icon(CupertinoIcons.arrow_branch, size: 18),
+              text: 'Git',
             ),
             Tab(
-              icon: Tooltip(
-                message: 'System',
-                child: Icon(CupertinoIcons.heart, size: 20),
-              ),
+              height: 52,
+              iconMargin: EdgeInsets.only(bottom: 3),
+              icon: Icon(CupertinoIcons.gauge, size: 18),
+              text: 'System',
             ),
             Tab(
-              icon: Tooltip(
-                message: 'Preview',
-                child: Icon(CupertinoIcons.globe, size: 20),
-              ),
+              height: 52,
+              iconMargin: EdgeInsets.only(bottom: 3),
+              icon: Icon(CupertinoIcons.globe, size: 18),
+              text: 'Preview',
             ),
           ],
         ),

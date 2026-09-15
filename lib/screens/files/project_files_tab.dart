@@ -5,7 +5,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:file_saver/file_saver.dart';
 import 'package:workfromphone/models/project_directory.dart';
 import 'package:workfromphone/services/api_service.dart';
+import 'package:workfromphone/theme/app_theme.dart';
 import 'package:workfromphone/utils/tokyo_night_theme.dart';
+import 'package:workfromphone/widgets/app_ui.dart';
 import 'package:workfromphone/widgets/code_editor_view.dart';
 import 'package:workfromphone/widgets/material_file_icon.dart';
 
@@ -92,13 +94,10 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
     final known = _items.where((item) => item.path == path).firstOrNull;
     if (known?.sizeBytes != null && known!.sizeBytes! > maxEditorBytes) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'File exceeds the 2 MiB editor limit. Download it instead.',
-            ),
-            backgroundColor: Colors.red,
-          ),
+        showAppSnackBar(
+          context,
+          'File exceeds the 2 MiB editor limit. Download it instead.',
+          tone: AppTone.danger,
         );
       }
       return;
@@ -118,13 +117,10 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
       if (fileData.content.length > maxEditorBytes) {
         if (mounted) {
           setState(() => _isLoading = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'File exceeds the 2 MiB editor limit. Download it instead.',
-              ),
-              backgroundColor: Colors.red,
-            ),
+          showAppSnackBar(
+            context,
+            'File exceeds the 2 MiB editor limit. Download it instead.',
+            tone: AppTone.danger,
           );
         }
         return;
@@ -142,11 +138,10 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to open file: $e'),
-            backgroundColor: Colors.red,
-          ),
+        showAppSnackBar(
+          context,
+          'Failed to open file: $e',
+          tone: AppTone.danger,
         );
       }
     }
@@ -181,11 +176,10 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
     } catch (e) {
       if (mounted) {
         setState(() => _isSavingFile = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to save file: $e'),
-            backgroundColor: Colors.red,
-          ),
+        showAppSnackBar(
+          context,
+          'Failed to save file: $e',
+          tone: AppTone.danger,
         );
       }
     }
@@ -239,12 +233,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Creation failed: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
+          showAppSnackBar(context, 'Creation failed: $e', tone: AppTone.danger);
         }
       }
     }
@@ -347,12 +336,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
       );
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Upload failed: $error'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        showAppSnackBar(context, 'Upload failed: $error', tone: AppTone.danger);
       }
     } finally {
       if (mounted) setState(() => _isTransferring = false);
@@ -386,11 +370,10 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
       );
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Download failed: $error'),
-            backgroundColor: Colors.red,
-          ),
+        showAppSnackBar(
+          context,
+          'Download failed: $error',
+          tone: AppTone.danger,
         );
       }
     } finally {
@@ -410,7 +393,9 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.dangerText,
+            ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Delete'),
           ),
@@ -437,12 +422,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
         _loadDirectory(_currentPath);
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Delete failed: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
+          showAppSnackBar(context, 'Delete failed: $e', tone: AppTone.danger);
         }
       }
     }
@@ -499,7 +479,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                             ),
                             FilledButton(
                               style: FilledButton.styleFrom(
-                                backgroundColor: Colors.red,
+                                backgroundColor: AppColors.dangerText,
                               ),
                               onPressed: () {
                                 Navigator.pop(ctx);
@@ -536,7 +516,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                               width: 8,
                               height: 8,
                               decoration: const BoxDecoration(
-                                color: Colors.amber,
+                                color: AppColors.warning,
                                 shape: BoxShape.circle,
                               ),
                             ),
@@ -578,10 +558,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                       ? const SizedBox(
                           width: 14,
                           height: 14,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(CupertinoIcons.arrow_down_doc, size: 16),
                   label: const Text('Save'),
@@ -705,9 +682,29 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
           child: _isLoading
               ? const Center(child: CircularProgressIndicator())
               : _errorMessage != null
-              ? Center(child: Text(_errorMessage!))
+              ? Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(AppSpace.xl),
+                    child: EmptyState(
+                      icon: CupertinoIcons.exclamationmark_circle,
+                      tone: AppTone.danger,
+                      title: 'Couldn\'t load this folder',
+                      message: _errorMessage,
+                      action: OutlinedButton.icon(
+                        onPressed: () => _loadDirectory(_currentPath),
+                        icon: const Icon(CupertinoIcons.refresh, size: 16),
+                        label: const Text('Retry'),
+                      ),
+                    ),
+                  ),
+                )
               : _items.isEmpty
-              ? const Center(child: Text('This folder is empty.'))
+              ? const Center(
+                  child: EmptyState(
+                    icon: CupertinoIcons.folder_open,
+                    title: 'This folder is empty',
+                  ),
+                )
               : ListView.separated(
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   itemCount: _items.length,
@@ -785,12 +782,12 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                                 Icon(
                                   CupertinoIcons.trash,
                                   size: 16,
-                                  color: Colors.red,
+                                  color: AppColors.dangerText,
                                 ),
                                 SizedBox(width: 8),
                                 Text(
                                   'Delete',
-                                  style: TextStyle(color: Colors.red),
+                                  style: TextStyle(color: AppColors.dangerText),
                                 ),
                               ],
                             ),

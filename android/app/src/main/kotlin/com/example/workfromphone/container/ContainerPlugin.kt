@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import io.flutter.embedding.engine.FlutterEngine
@@ -50,6 +52,7 @@ class ContainerPlugin(private val context: Context) : MethodChannel.MethodCallHa
                 LocalContainerService.stop(context)
                 result.success(mapOf("running" to false))
             }
+            "getLogs" -> getLogs(call, result)
             "isBatteryExemptionGranted" -> result.success(isBatteryExemptionGranted())
             "requestBatteryExemption" -> {
                 requestBatteryExemption()
@@ -74,6 +77,7 @@ class ContainerPlugin(private val context: Context) : MethodChannel.MethodCallHa
                     LocalContainerService.activePort,
                 )),
                 "prootFound" to (proot != null),
+                "prootRuntimeReady" to manager.isProotRuntimeReady(),
                 "prootPath" to (proot?.absolutePath ?: ""),
                 "workspace" to manager.workspaceDir.absolutePath,
                 "abi" to (Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"),
@@ -143,6 +147,16 @@ class ContainerPlugin(private val context: Context) : MethodChannel.MethodCallHa
             )
             return
         }
+        val missingRuntime = ProotRunner.missingRuntimeLibs(manager.nativeLibraryDir())
+        if (missingRuntime.isNotEmpty()) {
+            result.error(
+                "no-proot-runtime",
+                "proot cannot start: missing ${missingRuntime.joinToString()} " +
+                    "in nativeLibraryDir. Rebuild after running scripts/fetch-proot.sh.",
+                null,
+            )
+            return
+        }
         val workspaceArg = call.argument<String>("workspacePath")?.trim().orEmpty()
         val workspace = if (workspaceArg.isNotEmpty()) File(workspaceArg) else manager.workspaceDir
         workspace.mkdirs()
@@ -157,6 +171,86 @@ class ContainerPlugin(private val context: Context) : MethodChannel.MethodCallHa
             ),
         )
         result.success(mapOf("starting" to true, "port" to port))
+    }
+
+    private fun getLogs(call: MethodCall, result: MethodChannel.Result) {
+        val maxBytes = (call.argument<Number>("maxBytes")?.toLong() ?: 65536L)
+            .coerceIn(4096L, 262144L)
+        val manager = manager()
+        result.success(
+            mapOf(
+                "backend" to tail(manager.logFile(), maxBytes),
+                "bootstrap" to tail(
+                    java.io.File(manager.containerDir, "bootstrap.log"),
+                    maxBytes,
+                ),
+                "nativeLibs" to describeNativeLibs(),
+            ),
+        )
+    }
+
+    /** Lists nativeLibraryDir with sizes + md5 so we can tell whether the
+     *  extracted proot matches the APK (stale-extraction detection). */
+    private fun describeNativeLibs(): String {
+        val dir = java.io.File(context.applicationInfo.nativeLibraryDir)
+        val names = dir.list() ?: return "(nativeLibraryDir unreadable: $dir)"
+        if (names.isEmpty()) return "(nativeLibraryDir empty: $dir)"
+        return names.sorted().joinToString("\n") { name ->
+            val f = java.io.File(dir, name)
+            if (!f.isFile) {
+                "$name: (not a file)"
+            } else {
+                val needed = if (name == "libproot.so") " needed=${elfNeeded(f)}" else ""
+                "$name size=${f.length()} md5=${md5(f)} executable=${f.canExecute()}$needed"
+            }
+        }
+    }
+
+    private fun elfNeeded(file: java.io.File): String {
+        return try {
+            val bytes = file.readBytes()
+            if (bytes.size < 5 || bytes[0] != 0x7F.toByte()) return "(not ELF)"
+            val text = bytes.toString(Charsets.ISO_8859_1)
+            Regex("lib[A-Za-z0-9+._-]+\\.so(?:\\.\\d+)?")
+                .findAll(text)
+                .map { it.value }
+                .distinct()
+                .joinToString(",")
+                .ifEmpty { "(none)" }
+        } catch (_: Exception) {
+            "(unreadable)"
+        }
+    }
+
+    private fun md5(file: java.io.File): String {
+        return try {
+            val digest = java.security.MessageDigest.getInstance("MD5")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        } catch (_: Exception) {
+            "unreadable"
+        }
+    }
+
+    private fun tail(file: java.io.File, maxBytes: Long): String {
+        if (!file.isFile) return "(no log yet: ${file.name})"
+        val bytes = file.readBytes()
+        val slice = if (bytes.size > maxBytes) {
+            bytes.copyOfRange(bytes.size - maxBytes.toInt(), bytes.size)
+        } else {
+            bytes
+        }
+        // Drop a leading partial line so the view starts clean.
+        val text = slice.toString(Charsets.UTF_8)
+        val firstNewline = if (bytes.size > maxBytes) text.indexOf('\n') else -1
+        return if (firstNewline >= 0) text.substring(firstNewline + 1) else text
     }
 
     private fun isBatteryExemptionGranted(): Boolean {
@@ -176,9 +270,18 @@ class ContainerPlugin(private val context: Context) : MethodChannel.MethodCallHa
     class ProgressEvents : EventChannel.StreamHandler {
         @Volatile
         private var sink: EventChannel.EventSink? = null
+        private val mainHandler = Handler(Looper.getMainLooper())
 
         fun emit(event: Map<String, Any?>) {
-            sink?.success(event)
+            // EventSink.success must run on the UI thread; setup runs on
+            // a background executor (pool-*-thread-*), which otherwise
+            // crashes with "Methods marked with @UiThread must be executed
+            // on the main thread" as soon as download progress fires.
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                sink?.success(event)
+            } else {
+                mainHandler.post { sink?.success(event) }
+            }
         }
 
         override fun onListen(arguments: Any?, events: EventChannel.EventSink) {

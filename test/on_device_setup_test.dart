@@ -29,6 +29,18 @@ void main() {
     expect(LocalContainerService.localUrl(18765), 'http://127.0.0.1:18765');
   });
 
+  test('on-device status distinguishes missing proot runtime libs', () {
+    final incomplete = OnDeviceStatus.fromMap({
+      'prootFound': true,
+      'prootRuntimeReady': false,
+    });
+    expect(incomplete.prootFound, isTrue);
+    expect(incomplete.prootRuntimeReady, isFalse);
+
+    final ready = OnDeviceStatus.fromMap({'prootFound': true});
+    expect(ready.prootRuntimeReady, isTrue);
+  });
+
   test('saving the on-device profile pins directHttp loopback', () async {
     final profile = await LocalContainerService.saveAsActiveProfile(
       port: 8000,

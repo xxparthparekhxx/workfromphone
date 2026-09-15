@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:workfromphone/screens/main_screen.dart';
+import 'package:workfromphone/theme/app_theme.dart';
 
 void main() {
   runApp(const MyApp());
@@ -10,25 +12,19 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'WorkFromPhone',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
+    // The Matrix design system is dark-only (DESIGN.md).
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light.copyWith(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: AppColors.background,
       ),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
+      child: MaterialApp(
+        title: 'WorkFromPhone',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.dark(),
+        themeMode: ThemeMode.dark,
+        home: const MainScreen(),
       ),
-      themeMode: ThemeMode.system,
-      home: const MainScreen(),
     );
   }
 }

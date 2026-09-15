@@ -25,33 +25,33 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: GeneralChatScreen()));
       await tester.pumpAndSettle();
 
-      expect(find.text('AI General Assistant'), findsOneWidget);
+      expect(find.text('Ask anything'), findsWidgets);
       expect(
         find.byKey(const Key('general-chat-model-picker')),
         findsOneWidget,
       );
-      expect(
-        find.byKey(const Key('general-chat-web-search-chip')),
-        findsOneWidget,
+      final webSearchChip = find.byKey(
+        const Key('general-chat-web-search-chip'),
       );
+      expect(webSearchChip, findsOneWidget);
       expect(find.byKey(const Key('general-chat-input')), findsOneWidget);
       expect(find.byKey(const Key('general-chat-send-button')), findsOneWidget);
 
       // Verify default web search state is OFF
-      expect(find.text('Web Search OFF'), findsOneWidget);
+      expect(tester.widget<FilterChip>(webSearchChip).selected, isFalse);
 
       // Tap Web Search chip to toggle ON
-      await tester.tap(find.byKey(const Key('general-chat-web-search-chip')));
+      await tester.tap(webSearchChip);
       await tester.pump();
 
-      expect(find.text('Web Search ON'), findsOneWidget);
+      expect(tester.widget<FilterChip>(webSearchChip).selected, isTrue);
       final isSaved = await StorageService.loadGeneralChatWebSearchEnabled();
       expect(isSaved, isTrue);
 
       // Tap again to toggle OFF
-      await tester.tap(find.byKey(const Key('general-chat-web-search-chip')));
+      await tester.tap(webSearchChip);
       await tester.pump();
-      expect(find.text('Web Search OFF'), findsOneWidget);
+      expect(tester.widget<FilterChip>(webSearchChip).selected, isFalse);
     },
   );
 
@@ -86,7 +86,9 @@ void main() {
       await tester.pump();
 
       expect(find.text('hello again'), findsWidgets);
-      expect(find.text('AI General Assistant'), findsNothing);
+      // The empty state (with its prompt suggestions) is gone once a message
+      // has been sent.
+      expect(find.text('Ask anything'), findsNothing);
     },
   );
 }

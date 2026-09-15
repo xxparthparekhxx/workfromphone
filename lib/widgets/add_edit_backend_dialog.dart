@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:workfromphone/models/backend_profile.dart';
 import 'package:workfromphone/services/api_service.dart';
 import 'package:workfromphone/services/storage_service.dart';
+import 'package:workfromphone/theme/app_theme.dart';
 
 class AddEditBackendDialog extends StatefulWidget {
   final BackendProfile? profile;
@@ -345,7 +346,9 @@ class _AddEditBackendDialogState extends State<AddEditBackendDialog> {
                             _isOnline!
                                 ? CupertinoIcons.check_mark_circled_solid
                                 : CupertinoIcons.xmark_circle_fill,
-                            color: _isOnline! ? Colors.green : Colors.red,
+                            color: _isOnline!
+                                ? AppColors.success
+                                : AppColors.dangerText,
                             size: 16,
                           ),
                           const SizedBox(width: 4),
@@ -355,7 +358,9 @@ class _AddEditBackendDialogState extends State<AddEditBackendDialog> {
                                   ? 'Online'
                                   : (_probeMessage ?? 'Unreachable'),
                               style: TextStyle(
-                                color: _isOnline! ? Colors.green : Colors.red,
+                                color: _isOnline!
+                                    ? AppColors.success
+                                    : AppColors.dangerText,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 12,
                               ),

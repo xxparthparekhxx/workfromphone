@@ -54,15 +54,19 @@ The Flutter setup wizard fetches that manifest to resolve the download URL.
 
 ## proot binaries
 
-Patched `proot` binaries (see oonid/pr, targetSdk 35 precedent) are **not**
-checked in. They must live in `android/app/src/main/jniLibs/<abi>/` so the
-loader maps them from `nativeLibraryDir` — Android W^X forbids executing
-files in app-writable directories. Fetch them with:
+Termux-patched `proot` plus its runtime (`libtalloc`, `libandroid-shmem`,
+loader) are **not** checked in. They must live in
+`android/app/src/main/jniLibs/<abi>/` so the loader maps them from
+`nativeLibraryDir` — Android W^X forbids executing files in app-writable
+directories, and AGP only packages names matching `lib*.so`. Fetch them
+with:
 
 ```bash
 scripts/fetch-proot.sh
 ```
 
-`proroot` is an evaluated alternative if the patched proot proves
-unmaintained; the `ProotRunner` argv (`-r rootfs -b workspace -0 -w`) is
-compatible with both.
+`android/app/build.gradle.kts` runs that script from `preBuild` when the
+files are missing, then rewrites proot's DT_NEEDED from `libtalloc.so.2`
+to `libtalloc.so`. App processes ignore `LD_LIBRARY_PATH`, so a versioned
+soname in nativeLibraryDir is the only name the linker will load — and
+AGP will not package `*.so.2`.

@@ -109,11 +109,18 @@ class LocalContainerService : Service() {
         val manager = RootfsManager(this)
         executor.execute {
             try {
+                manager.logFile().writeText(
+                    "[container] start ${java.util.Date()}\n" +
+                        "[container] proot=${config.prootBinary}\n",
+                )
                 // First start ever: run the guest bootstrap one-shot so apt
                 // packages, the coder user, and resolv.conf exist before the
                 // backend binds its port.
                 val bootstrapped = File(config.rootfsDir, "opt/workfromphone/.bootstrapped")
                 if (!bootstrapped.isFile) {
+                    File(manager.containerDir, "bootstrap.log").writeText(
+                        "[container] bootstrap ${java.util.Date()}\n",
+                    )
                     val bootstrap = ProotRunner.spawn(
                         config,
                         ProotRunner.bootstrapCommand(),

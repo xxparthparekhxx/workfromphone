@@ -1,7 +1,8 @@
 #!/bin/sh
 # Launch the WorkFromPhone backend INSIDE the proot Debian guest.
 #
-# Environment (exported by LocalContainerService via proot -b/-e):
+# Environment (injected by ProotRunner via `/usr/bin/env -i` so host
+# linker vars like LD_LIBRARY_PATH do not leak into Debian):
 #   ACCESS_TOKEN  mandatory, even on loopback: any on-device app can reach
 #                 127.0.0.1, so an unauthenticated localhost server is not safe.
 #   PORT          backend port (default 8000).

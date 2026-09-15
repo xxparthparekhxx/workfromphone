@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:workfromphone/screens/chat/general_chat_screen.dart';
 import 'package:workfromphone/screens/projects/projects_screen.dart';
 import 'package:workfromphone/screens/settings/settings_screen.dart';
+import 'package:workfromphone/theme/app_theme.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -25,30 +26,35 @@ class _MainScreenState extends State<MainScreen> {
           SettingsScreen(isActive: _currentIndex == 2),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (int index) {
-          setState(() {
-            _currentIndex = index;
-          });
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(CupertinoIcons.folder),
-            selectedIcon: Icon(CupertinoIcons.folder_fill),
-            label: 'Projects',
-          ),
-          NavigationDestination(
-            icon: Icon(CupertinoIcons.sparkles),
-            selectedIcon: Icon(CupertinoIcons.sparkles),
-            label: 'Assistant',
-          ),
-          NavigationDestination(
-            icon: Icon(CupertinoIcons.settings),
-            selectedIcon: Icon(CupertinoIcons.settings_solid),
-            label: 'Settings',
-          ),
-        ],
+      bottomNavigationBar: DecoratedBox(
+        decoration: const BoxDecoration(
+          border: Border(top: BorderSide(color: AppColors.border)),
+        ),
+        child: NavigationBar(
+          selectedIndex: _currentIndex,
+          onDestinationSelected: (int index) {
+            setState(() {
+              _currentIndex = index;
+            });
+          },
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(CupertinoIcons.folder),
+              selectedIcon: Icon(CupertinoIcons.folder_fill),
+              label: 'Projects',
+            ),
+            NavigationDestination(
+              icon: Icon(CupertinoIcons.sparkles),
+              selectedIcon: Icon(CupertinoIcons.sparkles),
+              label: 'Assistant',
+            ),
+            NavigationDestination(
+              icon: Icon(CupertinoIcons.settings),
+              selectedIcon: Icon(CupertinoIcons.settings_solid),
+              label: 'Settings',
+            ),
+          ],
+        ),
       ),
     );
   }

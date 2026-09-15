@@ -163,9 +163,10 @@ How it works:
 
 Notes for builders: the rootfs image is Debian minimal + backend +
 `git/curl/ca-certificates/build-essential` only (see `rootfs/`); patched
-`proot` binaries live in `android/app/src/main/jniLibs/<abi>/` (fetch with
-`scripts/fetch-proot.sh`) because Android W^X only allows executing code
-from `nativeLibraryDir`. Releases publish
+`proot` plus `libtalloc` / `libandroid-shmem` / loader live in
+`android/app/src/main/jniLibs/<abi>/` (fetch with `scripts/fetch-proot.sh`,
+also run automatically on Android `preBuild`) because Android W^X only
+allows executing code from `nativeLibraryDir`. Releases publish
 `workfromphone-rootfs-debian-<arch>.tar.gz` + SHA-256 on every `backend-v*`
 tag, mirroring the `backend-manifest.json` flow. Expect ~5% CPU overhead
 from proot's ptrace layer.
@@ -292,7 +293,7 @@ dart format lib/ test/
 │   ├── bootstrap.sh                 # First-boot guest setup (DNS, toolchain)
 │   └── launch.sh                    # Guest backend launcher (token-guarded)
 ├── android/app/src/main/
-│   ├── jniLibs/<abi>/               # Patched proot (via scripts/fetch-proot.sh)
+│   ├── jniLibs/<abi>/               # proot + talloc + shmem + loader (scripts/fetch-proot.sh)
 │   └── kotlin/.../container/        # RootfsManager, ProotRunner, foreground service
 ├── lib/
 │   ├── models/                      # Dart data models

@@ -8,7 +8,9 @@ import 'package:workfromphone/screens/chat/project_chat_screen.dart';
 import 'package:workfromphone/screens/projects/directory_picker_dialog.dart';
 import 'package:workfromphone/services/api_service.dart';
 import 'package:workfromphone/services/storage_service.dart';
+import 'package:workfromphone/theme/app_theme.dart';
 import 'package:workfromphone/widgets/add_edit_backend_dialog.dart';
+import 'package:workfromphone/widgets/app_ui.dart';
 import 'package:workfromphone/widgets/server_picker_sheet.dart';
 
 class ProjectsScreen extends StatefulWidget {
@@ -24,6 +26,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   BackendProfile? _activeProfile;
   bool _isLoading = true;
   bool _isServerOnline = false;
+  bool _isCheckingServer = false;
   String _searchQuery = '';
 
   @override
@@ -33,10 +36,6 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   }
 
   Future<void> _loadData() async {
-    setState(() {
-      _isLoading = true;
-    });
-
     final cfg = await StorageService.loadLLMConfig();
     final activeProfile = await StorageService.loadActiveBackendProfile();
 
@@ -45,15 +44,23 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       backendUrl: cfg.backendUrl,
     );
     final list = await StorageService.loadRecentProjects();
-    final online = await ApiService.testServer(cfg.backendUrl);
+    if (!mounted) return;
 
+    // Show local data right away; the reachability probe can take seconds
+    // when the host is offline, so only the host status waits on it.
+    setState(() {
+      _llmConfig = cfg;
+      _activeProfile = activeProfile;
+      _projects = list;
+      _isLoading = false;
+      _isCheckingServer = true;
+    });
+
+    final online = await ApiService.testServer(cfg.backendUrl);
     if (mounted) {
       setState(() {
-        _llmConfig = cfg;
-        _activeProfile = activeProfile;
-        _projects = list;
         _isServerOnline = online;
-        _isLoading = false;
+        _isCheckingServer = false;
       });
     }
   }
@@ -112,522 +119,332 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     await _loadData();
   }
 
-  Widget _buildProjectTypeBadge(String? type) {
-    if (type == null) return const SizedBox.shrink();
-    Color color = Colors.blueGrey;
-    IconData icon = CupertinoIcons.folder;
-
-    if (type.contains('flutter') || type.contains('dart')) {
-      color = Colors.lightBlue;
-      icon = Icons.flutter_dash;
-    } else if (type.contains('python')) {
-      color = Colors.amber.shade700;
-      icon = CupertinoIcons.command;
-    } else if (type.contains('node') || type.contains('javascript')) {
-      color = Colors.green;
-      icon = Icons.javascript;
-    } else if (type.contains('rust')) {
-      color = Colors.deepOrange;
-      icon = CupertinoIcons.gear;
-    } else if (type.contains('git')) {
-      color = Colors.orange;
-      icon = CupertinoIcons.arrow_up_circle;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.4)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 4),
-          Text(
-            type.toUpperCase(),
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final query = _searchQuery.toLowerCase();
     final filtered = _projects
         .where(
           (p) =>
-              p.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-              p.path.toLowerCase().contains(_searchQuery.toLowerCase()),
+              p.name.toLowerCase().contains(query) ||
+              p.path.toLowerCase().contains(query),
         )
         .toList();
 
-    final activeHostName =
-        _activeProfile?.name ??
-        (_llmConfig.backendUrl.isEmpty
-            ? 'Local Host'
-            : _llmConfig.backendUrl
-                  .replaceAll('http://', '')
-                  .replaceAll('https://', ''));
-
     return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'Projects',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        actions: [
-          // Server status indicator with quick switch action
-          InkWell(
-            onTap: _openServerPicker,
-            borderRadius: BorderRadius.circular(20),
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest.withValues(
-                  alpha: 0.5,
-                ),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: _isServerOnline
-                      ? Colors.green.withValues(alpha: 0.4)
-                      : Colors.red.withValues(alpha: 0.4),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: _isServerOnline ? Colors.green : Colors.red,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _isServerOnline ? 'Host Online' : 'Host Offline',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: _isServerOnline ? Colors.green : Colors.red,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  const Icon(CupertinoIcons.chevron_down, size: 12),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text('Projects')),
       body: RefreshIndicator(
         onRefresh: _loadData,
         child: _isLoading
             ? const Center(child: CircularProgressIndicator())
             : ListView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpace.lg,
+                  AppSpace.md,
+                  AppSpace.lg,
+                  AppSpace.xxl,
+                ),
                 children: [
-                  // Prominent Active Host Switcher Bar
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 14),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.surfaceContainerHighest
-                          .withValues(alpha: 0.45),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: theme.colorScheme.outlineVariant.withValues(
-                          alpha: 0.35,
-                        ),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          CupertinoIcons.desktopcomputer,
-                          size: 18,
-                          color: theme.colorScheme.primary,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: InkWell(
-                            onTap: _openServerPicker,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text(
-                                      activeHostName,
-                                      style: const TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    const Icon(
-                                      CupertinoIcons.chevron_down,
-                                      size: 12,
-                                    ),
-                                  ],
-                                ),
-                                Text(
-                                  _llmConfig.backendUrl,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                    fontFamily: 'monospace',
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 4,
-                            ),
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
-                          onPressed: _addNewServer,
-                          icon: const Icon(CupertinoIcons.plus, size: 14),
-                          label: const Text(
-                            'Add Host',
-                            style: TextStyle(fontSize: 11),
-                          ),
-                        ),
-                      ],
-                    ),
+                  const SectionLabel('Host'),
+                  _buildHostCard(),
+                  const SizedBox(height: AppSpace.xl),
+                  _buildOpenProjectCard(),
+                  const SizedBox(height: AppSpace.xl),
+                  SectionLabel(
+                    'Recent',
+                    count: _projects.isEmpty ? null : _projects.length,
                   ),
-
-                  // Server connection notice if offline
-                  if (!_isServerOnline)
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 16),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.errorContainer.withValues(
-                          alpha: 0.7,
-                        ),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            CupertinoIcons.wifi_slash,
-                            color: theme.colorScheme.error,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Backend Server Not Reachable',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: theme.colorScheme.onErrorContainer,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                                Text(
-                                  'Make sure FastAPI is running on your host (${_llmConfig.backendUrl}).',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: theme.colorScheme.onErrorContainer,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                  // Hero Action Card: Pick project
-                  Card(
-                    elevation: 0,
-                    color: theme.colorScheme.primaryContainer.withValues(
-                      alpha: 0.5,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      side: BorderSide(
-                        color: theme.colorScheme.primary.withValues(alpha: 0.3),
-                      ),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(18.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              CircleAvatar(
-                                backgroundColor: theme.colorScheme.primary,
-                                child: const Icon(
-                                  CupertinoIcons.plus_circle,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              const SizedBox(width: 14),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Work on PC Project',
-                                      style: theme.textTheme.titleMedium
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      'Select any directory on your computer to begin coding with AI assistance.',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color:
-                                            theme.colorScheme.onSurfaceVariant,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          SizedBox(
-                            width: double.infinity,
-                            child: FilledButton.icon(
-                              onPressed: _isServerOnline
-                                  ? _pickDirectory
-                                  : null,
-                              icon: const Icon(
-                                CupertinoIcons.folder_badge_plus,
-                              ),
-                              label: const Text(
-                                'Browse & Select Project Directory',
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  // Recent Projects Header
-                  Row(
-                    children: [
-                      const Icon(CupertinoIcons.clock_fill, size: 16),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Recent Projects',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const Spacer(),
-                      if (_projects.isNotEmpty)
-                        Text(
-                          '${_projects.length} project${_projects.length == 1 ? "" : "s"}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 10),
-
-                  // Search Bar for recent projects
                   if (_projects.length > 3) ...[
                     TextField(
-                      onChanged: (val) {
-                        setState(() {
-                          _searchQuery = val;
-                        });
-                      },
-                      decoration: InputDecoration(
-                        hintText: 'Filter recent projects...',
-                        prefixIcon: const Icon(CupertinoIcons.search, size: 18),
-                        isDense: true,
-                        filled: true,
-                        fillColor: theme.colorScheme.surfaceContainerHighest
-                            .withValues(alpha: 0.5),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide.none,
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
-                        ),
+                      onChanged: (val) => setState(() => _searchQuery = val),
+                      decoration: const InputDecoration(
+                        hintText: 'Filter projects',
+                        prefixIcon: Icon(CupertinoIcons.search, size: 16),
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpace.md),
                   ],
-
-                  // Recent Projects List
                   if (_projects.isEmpty)
-                    Container(
-                      padding: const EdgeInsets.all(32),
-                      alignment: Alignment.center,
-                      child: Column(
-                        children: [
-                          Icon(
-                            CupertinoIcons.folder_badge_minus,
-                            size: 48,
-                            color: theme.colorScheme.outlineVariant,
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            'No recent projects yet',
-                            style: TextStyle(
-                              color: theme.colorScheme.onSurfaceVariant,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Use the button above to select your first workspace folder.',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: AppSpace.xl),
+                      child: Center(
+                        child: EmptyState(
+                          icon: CupertinoIcons.folder,
+                          title: 'No recent projects',
+                          message: 'Projects you open will show up here.',
+                        ),
                       ),
                     )
                   else if (filtered.isEmpty)
                     Padding(
-                      padding: const EdgeInsets.all(24.0),
+                      padding: const EdgeInsets.all(AppSpace.xl),
                       child: Center(
                         child: Text(
                           'No projects match "$_searchQuery"',
-                          style: TextStyle(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ),
                     )
                   else
-                    ...filtered.map((project) {
-                      return Card(
-                        elevation: 0,
-                        margin: const EdgeInsets.only(bottom: 8),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          side: BorderSide(
-                            color: theme.colorScheme.outlineVariant.withValues(
-                              alpha: 0.4,
-                            ),
-                          ),
-                        ),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: () => _openChat(project),
-                          child: Padding(
-                            padding: const EdgeInsets.all(12.0),
-                            child: Row(
-                              children: [
-                                CircleAvatar(
-                                  backgroundColor:
-                                      theme.colorScheme.secondaryContainer,
-                                  child: Icon(
-                                    CupertinoIcons.folder,
-                                    color:
-                                        theme.colorScheme.onSecondaryContainer,
-                                    size: 20,
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Flexible(
-                                            child: Text(
-                                              project.name,
-                                              style: const TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 14,
-                                              ),
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          _buildProjectTypeBadge(
-                                            project.projectType,
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        project.path,
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          color: theme
-                                              .colorScheme
-                                              .onSurfaceVariant,
-                                          fontFamily: 'monospace',
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                IconButton(
-                                  icon: const Icon(
-                                    CupertinoIcons.chat_bubble_2,
-                                    size: 20,
-                                  ),
-                                  tooltip: 'Conversation History',
-                                  onPressed: () => _openConversations(project),
-                                ),
-                                IconButton(
-                                  icon: const Icon(
-                                    CupertinoIcons.delete,
-                                    size: 18,
-                                    color: Colors.redAccent,
-                                  ),
-                                  tooltip: 'Remove from Recents',
-                                  onPressed: () => _removeProject(project),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    }),
+                    Card(
+                      child: Column(
+                        children: [
+                          for (var i = 0; i < filtered.length; i++) ...[
+                            if (i > 0) const Divider(),
+                            _buildProjectRow(filtered[i]),
+                          ],
+                        ],
+                      ),
+                    ),
                 ],
               ),
+      ),
+    );
+  }
+
+  Widget _buildHostCard() {
+    final theme = Theme.of(context);
+    final url = _llmConfig.backendUrl;
+    final hostName =
+        _activeProfile?.name ??
+        (url.isEmpty
+            ? 'No host configured'
+            : url.replaceAll('http://', '').replaceAll('https://', ''));
+
+    return Card(
+      child: Column(
+        children: [
+          InkWell(
+            key: const Key('projects-host-card'),
+            onTap: _openServerPicker,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpace.md,
+                AppSpace.md,
+                AppSpace.xs,
+                AppSpace.md,
+              ),
+              child: Row(
+                children: [
+                  const IconTile(icon: CupertinoIcons.desktopcomputer),
+                  const SizedBox(width: AppSpace.md),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                hostName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleSmall,
+                              ),
+                            ),
+                            const SizedBox(width: AppSpace.sm),
+                            StatusPill(
+                              label: _isCheckingServer
+                                  ? 'Checking'
+                                  : _isServerOnline
+                                  ? 'Online'
+                                  : 'Offline',
+                              tone: _isCheckingServer
+                                  ? AppTone.neutral
+                                  : _isServerOnline
+                                  ? AppTone.success
+                                  : AppTone.danger,
+                            ),
+                          ],
+                        ),
+                        // Without a profile name the title already is the URL.
+                        if (url.isNotEmpty && _activeProfile != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            url,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(CupertinoIcons.plus, size: 18),
+                    tooltip: 'Add host',
+                    onPressed: _addNewServer,
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.only(right: AppSpace.sm),
+                    child: Icon(
+                      CupertinoIcons.chevron_up_chevron_down,
+                      size: 14,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (!_isServerOnline && !_isCheckingServer) ...[
+            const Divider(),
+            Container(
+              color: AppTone.danger.container,
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpace.md,
+                vertical: AppSpace.md,
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    CupertinoIcons.wifi_slash,
+                    size: 16,
+                    color: AppColors.dangerText,
+                  ),
+                  const SizedBox(width: AppSpace.sm),
+                  Expanded(
+                    child: Text(
+                      url.isEmpty
+                          ? 'Add a host to start working on projects.'
+                          : 'Can\'t reach the backend. Make sure it\'s running, '
+                                'then pull down to retry.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOpenProjectCard() {
+    final theme = Theme.of(context);
+    return Card(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        side: BorderSide(
+          color: _isServerOnline
+              ? AppColors.primary.withValues(alpha: 0.4)
+              : AppColors.border,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpace.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Open a project', style: theme.textTheme.titleMedium),
+            const SizedBox(height: AppSpace.xs),
+            Text(
+              'Pick a folder on your host to chat with the agent, edit files, '
+              'run terminals and manage git.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: AppSpace.lg),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                key: const Key('projects-browse-button'),
+                onPressed: _isServerOnline ? _pickDirectory : null,
+                icon: const Icon(CupertinoIcons.folder_badge_plus, size: 18),
+                label: const Text('Browse folders'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProjectRow(ProjectDirectory project) {
+    final theme = Theme.of(context);
+    final type = project.projectType;
+    return InkWell(
+      onTap: () => _openChat(project),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpace.md,
+          AppSpace.sm,
+          AppSpace.xs,
+          AppSpace.sm,
+        ),
+        child: Row(
+          children: [
+            const IconTile(icon: CupertinoIcons.folder, size: 32),
+            const SizedBox(width: AppSpace.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          project.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall,
+                        ),
+                      ),
+                      if (type != null) ...[
+                        const SizedBox(width: AppSpace.sm),
+                        ToneBadge(label: type),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    project.path,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(CupertinoIcons.clock, size: 18),
+              tooltip: 'Conversation history',
+              onPressed: () => _openConversations(project),
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'More actions',
+              icon: const Icon(CupertinoIcons.ellipsis, size: 18),
+              onSelected: (value) {
+                if (value == 'remove') _removeProject(project);
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'remove',
+                  child: Row(
+                    children: [
+                      Icon(
+                        CupertinoIcons.minus_circle,
+                        size: 16,
+                        color: AppColors.dangerText,
+                      ),
+                      SizedBox(width: AppSpace.sm),
+                      Text(
+                        'Remove from recents',
+                        style: TextStyle(color: AppColors.dangerText),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

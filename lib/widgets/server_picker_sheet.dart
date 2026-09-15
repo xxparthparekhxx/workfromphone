@@ -4,7 +4,9 @@ import 'package:workfromphone/models/backend_profile.dart';
 import 'package:workfromphone/screens/settings/remote_backend_setup_screen.dart';
 import 'package:workfromphone/services/api_service.dart';
 import 'package:workfromphone/services/storage_service.dart';
+import 'package:workfromphone/theme/app_theme.dart';
 import 'package:workfromphone/widgets/add_edit_backend_dialog.dart';
+import 'package:workfromphone/widgets/app_ui.dart';
 
 class ServerPickerSheet extends StatefulWidget {
   final VoidCallback? onServerChanged;
@@ -19,10 +21,7 @@ class ServerPickerSheet extends StatefulWidget {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      showDragHandle: true,
       builder: (context) => ServerPickerSheet(onServerChanged: onServerChanged),
     );
   }
@@ -135,6 +134,10 @@ class _ServerPickerSheetState extends State<ServerPickerSheet> {
             child: const Text('Cancel'),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+              foregroundColor: Theme.of(ctx).colorScheme.onError,
+            ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Remove'),
           ),
@@ -150,262 +153,169 @@ class _ServerPickerSheetState extends State<ServerPickerSheet> {
   }
 
   Widget _buildTransportBadge(BackendTransport transport) {
-    String label = 'Direct HTTP';
-    Color color = Colors.teal;
-    IconData icon = CupertinoIcons.link;
-
-    if (transport == BackendTransport.sshTunnel) {
-      label = 'SSH Tunnel';
-      color = Colors.blue;
-      icon = CupertinoIcons.shield;
-    } else if (transport == BackendTransport.cloudflareTunnel) {
-      label = 'Cloudflare';
-      color = Colors.orange;
-      icon = CupertinoIcons.cloud;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
+    return switch (transport) {
+      BackendTransport.sshTunnel => const ToneBadge(
+        label: 'SSH tunnel',
+        icon: CupertinoIcons.shield,
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 10, color: color),
-          const SizedBox(width: 3),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-        ],
+      BackendTransport.cloudflareTunnel => const ToneBadge(
+        label: 'Cloudflare',
+        icon: CupertinoIcons.cloud,
       ),
-    );
+      _ => const ToneBadge(label: 'Direct', icon: CupertinoIcons.link),
+    };
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              children: [
-                const Icon(CupertinoIcons.desktopcomputer, size: 22),
-                const SizedBox(width: 8),
-                const Text(
-                  'Backend Servers',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(CupertinoIcons.refresh, size: 18),
-                  tooltip: 'Refresh Status',
-                  onPressed: () => _testAllProfiles(_profiles),
-                ),
-              ],
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SheetHeader(
+          title: 'Backend Servers',
+          subtitle: 'Choose which host this app works against.',
+          actions: [
+            IconButton(
+              icon: const Icon(CupertinoIcons.refresh, size: 18),
+              tooltip: 'Refresh Status',
+              onPressed: () => _testAllProfiles(_profiles),
             ),
-          ),
-          const Divider(height: 1),
+          ],
+        ),
+        const Divider(),
 
-          if (_isLoading)
-            const Padding(
-              padding: EdgeInsets.all(32),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (_profiles.isEmpty)
-            Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                children: [
-                  Icon(
-                    CupertinoIcons.wifi_slash,
-                    size: 42,
-                    color: theme.colorScheme.outlineVariant,
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'No saved server profiles yet',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
+        if (_isLoading)
+          const Padding(
+            padding: EdgeInsets.all(AppSpace.xxl),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_profiles.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(AppSpace.xl),
+            child: Center(
+              child: EmptyState(
+                icon: CupertinoIcons.wifi_slash,
+                title: 'No saved servers yet',
+                message:
                     'Add your PC or VPS to start coding and running tasks.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
               ),
-            )
-          else
-            Flexible(
-              child: ListView.separated(
-                shrinkWrap: true,
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                itemCount: _profiles.length,
-                separatorBuilder: (context, index) =>
-                    const Divider(height: 1, indent: 56),
-                itemBuilder: (context, idx) {
-                  final p = _profiles[idx];
-                  final isActive = _activeProfile?.id == p.id;
-                  final status = _onlineStatus[p.id];
+            ),
+          )
+        else
+          Flexible(
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: _profiles.length,
+              separatorBuilder: (context, index) => const Divider(),
+              itemBuilder: (context, idx) {
+                final p = _profiles[idx];
+                final isActive = _activeProfile?.id == p.id;
+                final status = _onlineStatus[p.id];
+                final tone = status == true
+                    ? AppTone.success
+                    : (status == false ? AppTone.danger : AppTone.neutral);
 
-                  return ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 4,
+                return InkWell(
+                  onTap: () => _selectServer(p),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpace.lg,
+                      AppSpace.md,
+                      AppSpace.xs,
+                      AppSpace.md,
                     ),
-                    leading: Stack(
-                      alignment: Alignment.bottomRight,
+                    child: Row(
                       children: [
-                        CircleAvatar(
-                          backgroundColor: isActive
-                              ? theme.colorScheme.primaryContainer
-                              : theme.colorScheme.surfaceContainerHighest,
-                          child: Icon(
-                            CupertinoIcons.desktopcomputer,
-                            color: isActive
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.onSurfaceVariant,
-                            size: 20,
-                          ),
+                        Icon(
+                          isActive
+                              ? CupertinoIcons.largecircle_fill_circle
+                              : CupertinoIcons.circle,
+                          size: 18,
+                          color: isActive
+                              ? AppColors.primary
+                              : AppColors.textMuted,
                         ),
-                        Container(
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: status == true
-                                ? Colors.green
-                                : (status == false ? Colors.red : Colors.grey),
-                            border: Border.all(
-                              color: theme.colorScheme.surface,
-                              width: 1.5,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    title: Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            p.name,
-                            style: TextStyle(
-                              fontWeight: isActive
-                                  ? FontWeight.bold
-                                  : FontWeight.w600,
-                              fontSize: 15,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        if (isActive)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.green.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: const Text(
-                              'ACTIVE',
-                              style: TextStyle(
-                                fontSize: 9,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.green,
+                        const SizedBox(width: AppSpace.md),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      p.name,
+                                      style: theme.textTheme.titleSmall,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  if (isActive) ...[
+                                    const SizedBox(width: AppSpace.sm),
+                                    const ToneBadge(
+                                      label: 'Active',
+                                      tone: AppTone.primary,
+                                    ),
+                                  ],
+                                ],
                               ),
-                            ),
-                          ),
-                      ],
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const SizedBox(height: 2),
-                        Text(
-                          p.backendUrl,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: theme.colorScheme.onSurfaceVariant,
-                            fontFamily: 'monospace',
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            _buildTransportBadge(p.transport),
-                            const SizedBox(width: 8),
-                            Text(
-                              status == true
-                                  ? 'Online'
-                                  : (status == false
-                                        ? 'Unreachable'
-                                        : 'Checking…'),
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: status == true
-                                    ? Colors.green
-                                    : (status == false
-                                          ? Colors.red
-                                          : Colors.grey),
-                                fontWeight: FontWeight.w500,
+                              const SizedBox(height: 2),
+                              Text(
+                                p.backendUrl,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: AppColors.textMuted,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                            ),
-                          ],
+                              const SizedBox(height: AppSpace.xs),
+                              Wrap(
+                                spacing: AppSpace.sm,
+                                runSpacing: AppSpace.xs,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  StatusPill(
+                                    label: status == true
+                                        ? 'Online'
+                                        : (status == false
+                                              ? 'Unreachable'
+                                              : 'Checking'),
+                                    tone: tone,
+                                  ),
+                                  _buildTransportBadge(p.transport),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
-                      ],
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
                         IconButton(
-                          icon: const Icon(CupertinoIcons.pencil, size: 18),
+                          icon: const Icon(CupertinoIcons.pencil, size: 16),
                           tooltip: 'Edit Server',
                           onPressed: () => _editServer(p),
                         ),
                         IconButton(
-                          icon: const Icon(
-                            CupertinoIcons.trash,
-                            size: 18,
-                            color: Colors.redAccent,
-                          ),
+                          icon: const Icon(CupertinoIcons.trash, size: 16),
+                          color: AppColors.dangerText,
                           tooltip: 'Remove Server',
                           onPressed: () => _deleteServer(p),
                         ),
                       ],
                     ),
-                    onTap: () => _selectServer(p),
-                  );
-                },
-              ),
+                  ),
+                );
+              },
             ),
+          ),
 
-          const Divider(height: 1),
+        const Divider(),
 
-          // Action Buttons
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpace.lg),
             child: Row(
               children: [
                 Expanded(
@@ -415,9 +325,9 @@ class _ServerPickerSheetState extends State<ServerPickerSheet> {
                     label: const Text('Add URL / Host'),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: AppSpace.sm),
                 Expanded(
-                  child: FilledButton.tonalIcon(
+                  child: FilledButton.icon(
                     onPressed: _addSshServer,
                     icon: const Icon(
                       CupertinoIcons.arrow_down_circle,
@@ -429,8 +339,8 @@ class _ServerPickerSheetState extends State<ServerPickerSheet> {
               ],
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

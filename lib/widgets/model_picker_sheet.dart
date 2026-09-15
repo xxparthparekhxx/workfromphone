@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:workfromphone/models/model_info.dart';
+import 'package:workfromphone/theme/app_theme.dart';
+import 'package:workfromphone/widgets/app_ui.dart';
 import 'package:workfromphone/widgets/model_provider_avatar.dart';
 
 class ModelPickerSheet extends StatefulWidget {
@@ -28,10 +30,6 @@ class ModelPickerSheet extends StatefulWidget {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
       builder: (ctx) => ModelPickerSheet(
         selectedModelId: selectedModelId,
         availableModels: availableModels,
@@ -155,7 +153,6 @@ class _ModelPickerSheetState extends State<ModelPickerSheet> {
   }) {
     final isSelected = _selectedFilter == id;
     final count = _countForFilter(id);
-    final theme = Theme.of(context);
 
     return Padding(
       padding: const EdgeInsets.only(right: 6),
@@ -163,42 +160,13 @@ class _ModelPickerSheetState extends State<ModelPickerSheet> {
         avatar: icon != null
             ? Icon(
                 icon,
-                size: 15,
-                color: isSelected
-                    ? theme.colorScheme.onPrimary
-                    : (isHighlight ? Colors.green : theme.colorScheme.primary),
+                size: 14,
+                color: isHighlight ? AppColors.success : null,
               )
             : null,
-        label: Text(
-          count > 0 ? '$label ($count)' : label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-            color: isSelected
-                ? theme.colorScheme.onPrimary
-                : (isHighlight ? Colors.green : null),
-          ),
-        ),
+        label: Text(count > 0 ? '$label ($count)' : label),
         selected: isSelected,
-        selectedColor: theme.colorScheme.primary,
-        checkmarkColor: theme.colorScheme.onPrimary,
-        backgroundColor: isHighlight
-            ? (isSelected
-                  ? theme.colorScheme.primary
-                  : Colors.green.withValues(alpha: 0.12))
-            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: BorderSide(
-            color: isSelected
-                ? theme.colorScheme.primary
-                : (isHighlight
-                      ? Colors.green.withValues(alpha: 0.4)
-                      : theme.colorScheme.outlineVariant.withValues(
-                          alpha: 0.4,
-                        )),
-          ),
-        ),
+        visualDensity: VisualDensity.compact,
         onSelected: (selected) {
           setState(() {
             _selectedFilter = selected ? id : 'all';
@@ -441,18 +409,14 @@ class _ModelPickerSheetState extends State<ModelPickerSheet> {
                           padding: const EdgeInsets.symmetric(vertical: 3),
                           child: Material(
                             color: isSelected
-                                ? theme.colorScheme.primaryContainer.withValues(
-                                    alpha: 0.4,
-                                  )
-                                : theme.colorScheme.surfaceContainerLow,
+                                ? AppColors.primaryTint
+                                : AppColors.surface,
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(AppRadius.md),
                               side: BorderSide(
                                 color: isSelected
-                                    ? theme.colorScheme.primary
-                                    : theme.colorScheme.outlineVariant
-                                          .withValues(alpha: 0.3),
-                                width: isSelected ? 1.5 : 1,
+                                    ? AppColors.primary
+                                    : AppColors.border,
                               ),
                             ),
                             clipBehavior: Clip.antiAlias,
@@ -511,42 +475,12 @@ class _ModelPickerSheetState extends State<ModelPickerSheet> {
                                     ),
                                   ),
                                   if (isFree)
-                                    Container(
-                                      margin: const EdgeInsets.only(left: 6),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.green.withValues(
-                                          alpha: 0.15,
-                                        ),
-                                        borderRadius: BorderRadius.circular(6),
-                                        border: Border.all(
-                                          color: Colors.green.withValues(
-                                            alpha: 0.5,
-                                          ),
-                                          width: 0.8,
-                                        ),
-                                      ),
-                                      child: const Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            CupertinoIcons.bolt,
-                                            size: 11,
-                                            color: Colors.green,
-                                          ),
-                                          SizedBox(width: 2),
-                                          Text(
-                                            'FREE',
-                                            style: TextStyle(
-                                              fontSize: 9.5,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.green,
-                                            ),
-                                          ),
-                                        ],
+                                    const Padding(
+                                      padding: EdgeInsets.only(left: 6),
+                                      child: ToneBadge(
+                                        label: 'Free',
+                                        tone: AppTone.success,
+                                        icon: CupertinoIcons.bolt_fill,
                                       ),
                                     ),
                                 ],

@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:workfromphone/models/task_stats.dart';
@@ -27,7 +28,8 @@ void main() {
 
     expect(find.text('42.5 tps'), findsOneWidget);
     expect(find.text('12.4k / 200k (6.2%)'), findsOneWidget);
-    expect(find.text('🛠️ 3'), findsOneWidget);
+    expect(find.byIcon(CupertinoIcons.hammer), findsOneWidget);
+    expect(find.text('3'), findsOneWidget);
     expect(find.text('3.4s'), findsOneWidget);
   });
 }
