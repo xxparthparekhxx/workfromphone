@@ -1,0 +1,40 @@
+# WorkFromPhone - full developer environment.
+#
+# Builds the backend image (backend/Dockerfile: Python + Node.js + C toolchain
+# + everyday CLI tools) and runs it as your workspace. Mounts persist the
+# generated ACCESS_TOKEN and your projects across restarts.
+#
+# Usage:
+#   docker compose up --build -d
+#   docker compose logs -f backend        # find the generated ACCESS_TOKEN
+#   docker compose exec backend bash      # full dev shell as `coder` (sudo ok)
+#
+# Then point the Flutter app at http://<host>:8000 with that token.
+services:
+  backend:
+    build:
+      context: ./backend
+    image: workfromphone-backend:dev
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      DEBUG: "${DEBUG:-false}"
+      # Leave empty on first run: the entrypoint generates a token and saves
+      # it to /home/coder/.config/workfromphone/backend.env (persisted via
+      # the wfp-home volume). Set it explicitly to use a known token.
+      ACCESS_TOKEN: "${ACCESS_TOKEN:-}"
+      WORKSPACE: "/home/coder"
+    volumes:
+      - wfp-home:/home/coder
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  wfp-home:

@@ -98,7 +98,36 @@ remote account.
 
 ---
 
-### 2. Using Standard Python Virtual Environment (`venv`)
+### 2. Docker Developer Environment (Full Workspace)
+
+The `Dockerfile` ships a full developer workspace (Python + Node.js for
+Vite/Next preview targets, C build toolchain, `vim/tmux/jq/ripgrep/sqlite3`;
+`coder` has passwordless sudo) with the backend pre-installed:
+
+```bash
+# From the repository root:
+docker compose up --build -d
+docker compose logs backend  # grab the generated ACCESS_TOKEN on first run
+
+# Or plain docker:
+docker build -t workfromphone-backend backend/
+docker run -d --name wfp -v wfp-home:/home/coder -p 8000:8000 workfromphone-backend
+docker logs wfp  # generated ACCESS_TOKEN (persisted in the wfp-home volume)
+```
+
+Notes:
+
+- `HOST`/`PORT` env vars are honored (the entrypoint rewrites uvicorn's
+  `--host`/`--port` from them), e.g. `-e PORT=9000 -p 9000:9000`.
+- `WORKSPACE=/home/coder` constrains the fs/git/terminal APIs to the
+  workspace; mount projects there.
+- Binding `0.0.0.0` without `ACCESS_TOKEN` auto-generates a token into
+  `~/.config/workfromphone/backend.env` — use a named volume so it survives
+  restarts. Point the Flutter app at `http://<host>:8000` with that token.
+
+---
+
+### 3. Using Standard Python Virtual Environment (`venv`)
 
 ```bash
 cd backend
