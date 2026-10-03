@@ -8,13 +8,10 @@ import 'package:workfromphone/models/token_usage.dart';
 import 'package:workfromphone/services/api_service.dart';
 
 class ChatService {
-  http.Client? _client;
   bool _isCancelled = false;
 
   void cancel() {
     _isCancelled = true;
-    _client?.close();
-    _client = null;
   }
 
   Future<void> runTask({
@@ -32,7 +29,9 @@ class ChatService {
     required Function(String error) onError,
   }) async {
     _isCancelled = false;
-    _client = http.Client();
+    // The client is run-local: each run's finally closes only its own
+    // client, so a delayed teardown can never close a newer run's client.
+    final client = http.Client();
 
     final base = ApiService.cleanUrl(backendUrl);
     final uri = Uri.parse('$base/api/v1/llm/chat');
@@ -50,7 +49,7 @@ class ChatService {
         ..headers['Accept'] = 'text/event-stream'
         ..body = jsonEncode(payload);
 
-      final response = await _client!.send(request);
+      final response = await client.send(request);
 
       if (response.statusCode != 200) {
         final body = await response.stream.bytesToString();
@@ -118,8 +117,7 @@ class ChatService {
         onError('Connection error: $e');
       }
     } finally {
-      _client?.close();
-      _client = null;
+      client.close();
     }
   }
 }

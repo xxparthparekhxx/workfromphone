@@ -12,6 +12,19 @@ typedef HostKeyVerifier = Future<bool> Function(
   String fingerprint,
 );
 
+/// User-facing setup failure. The message is safe to render directly in the
+/// UI: it never contains the executed command (which embeds generated
+/// tokens) and any wizard-generated secrets found in the captured output are
+/// redacted before a short snippet is included.
+class RemoteSetupException implements Exception {
+  final String message;
+
+  const RemoteSetupException(this.message);
+
+  @override
+  String toString() => message;
+}
+
 class RemoteSetupRequest {
   final String name;
   final String host;
@@ -323,7 +336,11 @@ done
 systemctl --user status workfromphone-backend.service --no-pager >&2 || true
 exit 13
 ''';
-    return _runChecked(client, 'sh -lc ${_shellEscape(script)}').then((_) {});
+    return _runChecked(
+      client,
+      'sh -lc ${_shellEscape(script)}',
+      scrub: [accessToken],
+    ).then((_) {});
   }
 
   Future<void> _installCloudflared(
@@ -386,22 +403,61 @@ systemctl --user daemon-reload
 systemctl --user enable --now workfromphone-tunnel.service
 systemctl --user is-active --quiet workfromphone-tunnel.service
 ''';
-    return _runChecked(client, 'sh -lc ${_shellEscape(script)}').then((_) {});
+    return _runChecked(
+      client,
+      'sh -lc ${_shellEscape(script)}',
+      scrub: [tunnelToken],
+    ).then((_) {});
   }
 
-  Future<String> _runChecked(SSHClient client, String command) async {
+  Future<String> _runChecked(
+    SSHClient client,
+    String command, {
+    Iterable<String> scrub = const [],
+  }) async {
     final result = await client.runWithResult(command);
     final stdout = utf8.decode(result.stdout, allowMalformed: true).trim();
     final stderr = utf8.decode(result.stderr, allowMalformed: true).trim();
     if ((result.exitCode ?? 1) != 0) {
-      throw ProcessException(
-        'ssh',
-        [command],
-        stderr.isEmpty ? stdout : stderr,
-        result.exitCode ?? -1,
+      throw RemoteSetupException(
+        _describeFailure(stdout, stderr, result.exitCode ?? -1, scrub),
       );
     }
     return stdout;
+  }
+
+  /// Builds a user-safe failure description. The command itself is never
+  /// included (it embeds the freshly generated ACCESS_TOKEN / tunnel token),
+  /// and every secret in [scrub] is redacted out of the captured output
+  /// before a truncated snippet (the last ~2 non-empty lines) is appended.
+  String _describeFailure(
+    String stdout,
+    String stderr,
+    int exitCode,
+    Iterable<String> scrub,
+  ) {
+    final detail = _scrubSecrets(stderr.isEmpty ? stdout : stderr, scrub);
+    final lines = detail
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+    if (lines.isEmpty) {
+      return 'SSH command failed (exit code $exitCode)';
+    }
+    final snippet = lines.length > 2
+        ? lines.sublist(lines.length - 2).join('\n')
+        : lines.join('\n');
+    return 'SSH command failed (exit code $exitCode): $snippet';
+  }
+
+  String _scrubSecrets(String text, Iterable<String> secrets) {
+    var result = text;
+    for (final secret in secrets) {
+      if (secret.isEmpty) continue;
+      result = result.replaceAll(secret, '[redacted]');
+    }
+    return result;
   }
 
   String _normalizeArchitecture(String architecture) {

@@ -106,9 +106,8 @@ class SystemMonitorSession {
       return;
     }
     _reconnectAttempts++;
-    final backoffSeconds = _reconnectAttempts <= 1
-        ? 3
-        : (3 * (1 << (_reconnectAttempts - 1))).clamp(3, 30);
+    final shift = (_reconnectAttempts - 1).clamp(0, 10);
+    final backoffSeconds = (3 * (1 << shift)).clamp(3, 30);
     _reconnectTimer = Timer(Duration(seconds: backoffSeconds), _connect);
   }
 

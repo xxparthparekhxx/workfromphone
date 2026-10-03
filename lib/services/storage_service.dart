@@ -287,11 +287,26 @@ class StorageService {
   // --- Multi-Conversation Persistence per Project ---
 
   static String _projectConvKey(String projectPath) {
-    return '$_prefixConversations${projectPath.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_')}';
+    return '$_prefixConversations${_pathHash(projectPath)}';
   }
 
   static String _projectActiveConvKey(String projectPath) {
-    return '$_prefixActiveConv${projectPath.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_')}';
+    return '$_prefixActiveConv${_pathHash(projectPath)}';
+  }
+
+  /// Deterministic FNV-1a 64-bit hash of the RAW path, rendered as hex.
+  /// Unlike mangling non-alphanumerics to `_` (where `~/code/foo_bar` and
+  /// `~/code/foo bar` collided and shared conversation data), distinct paths
+  /// always map to distinct keys.
+  static String _pathHash(String path) {
+    const offsetBasis = 0xcbf29ce484222325;
+    const prime = 0x100000001b3;
+    var hash = offsetBasis;
+    for (final byte in utf8.encode(path)) {
+      hash ^= byte;
+      hash = (hash * prime) & 0xFFFFFFFFFFFFFFFF;
+    }
+    return hash.toRadixString(16).padLeft(16, '0');
   }
 
   static Future<List<ConversationSession>> loadConversations(

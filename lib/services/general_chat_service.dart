@@ -9,13 +9,10 @@ import 'package:workfromphone/services/api_service.dart';
 class GeneralChatService {
   static const _defaultRouterBaseUrl = 'https://openrouter.ai/api/v1';
 
-  http.Client? _client;
   bool _isCancelled = false;
 
   void cancel() {
     _isCancelled = true;
-    _client?.close();
-    _client = null;
   }
 
   Future<void> runGeneralChat({
@@ -34,7 +31,9 @@ class GeneralChatService {
     required Function(String error) onError,
   }) async {
     _isCancelled = false;
-    _client = http.Client();
+    // The client is run-local: each run's finally closes only its own
+    // client, so a delayed teardown can never close a newer run's client.
+    final client = http.Client();
 
     final trimmedKey = apiKey.trim();
     final routerBaseUrl = _normalizeRouterBaseUrl(baseUrl);
@@ -43,6 +42,7 @@ class GeneralChatService {
     try {
       if (backend.isNotEmpty) {
         final handled = await _runViaBackend(
+          client,
           backendUrl: backend,
           backendAccessToken: backendAccessToken,
           routerBaseUrl: routerBaseUrl,
@@ -63,6 +63,7 @@ class GeneralChatService {
       }
 
       await _runDirect(
+        client,
         routerBaseUrl: routerBaseUrl,
         apiKey: trimmedKey,
         backendUrl: backend,
@@ -82,12 +83,12 @@ class GeneralChatService {
         onError('Connection failed: $e');
       }
     } finally {
-      _client?.close();
-      _client = null;
+      client.close();
     }
   }
 
-  Future<bool> _runViaBackend({
+  Future<bool> _runViaBackend(
+    http.Client client, {
     required String backendUrl,
     required String backendAccessToken,
     required String routerBaseUrl,
@@ -131,7 +132,7 @@ class GeneralChatService {
         ..headers['Accept'] = 'text/event-stream'
         ..body = jsonEncode(payload);
 
-      final response = await _client!.send(request);
+      final response = await client.send(request);
       if (_isCancelled) return true;
 
       // Older backends do not have this route; fall back to a direct router call.
@@ -182,12 +183,13 @@ class GeneralChatService {
   }
 
   Future<List<Map<String, String>>> _fetchDirectWebSearch(
+    http.Client client,
     String query,
     int limit,
   ) async {
     try {
       final uri = Uri.parse('https://html.duckduckgo.com/html/');
-      final resp = await _client!.post(
+      final resp = await client.post(
         uri,
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -253,7 +255,8 @@ class GeneralChatService {
     return [];
   }
 
-  Future<void> _runDirect({
+  Future<void> _runDirect(
+    http.Client client, {
     required String routerBaseUrl,
     required String apiKey,
     String backendUrl = '',
@@ -286,7 +289,7 @@ class GeneralChatService {
             final searchUri = Uri.parse(
               '${ApiService.cleanUrl(backendUrl)}/api/v1/search',
             );
-            final searchResp = await _client!.post(
+            final searchResp = await client.post(
               searchUri,
               headers: ApiService.headersFor(
                 token: backendAccessToken,
@@ -305,7 +308,7 @@ class GeneralChatService {
         }
 
         if (searchResults.isEmpty) {
-          final directRes = await _fetchDirectWebSearch(lastQuery, 5);
+          final directRes = await _fetchDirectWebSearch(client, lastQuery, 5);
           searchResults = directRes;
         }
 
@@ -352,7 +355,7 @@ class GeneralChatService {
 
     onStatus('Generating response with $model...');
 
-    final response = await _client!.send(request);
+    final response = await client.send(request);
     if (_isCancelled) return;
 
     if (response.statusCode != 200) {
