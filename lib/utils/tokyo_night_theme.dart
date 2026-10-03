@@ -58,6 +58,18 @@ class TokyoNightCodeController extends TextEditingController {
     r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()',
   );
 
+  // Combined token regex, compiled ONCE (buildTextSpan runs per keystroke).
+  static final RegExp _tokenPattern = RegExp(
+    '(${_commentPattern.pattern})|'
+    '(${_stringPattern.pattern})|'
+    '(${_annotationPattern.pattern})|'
+    '(${_keywordPattern.pattern})|'
+    '(${_numberPattern.pattern})|'
+    '(${_typePattern.pattern})|'
+    '(${_functionCallPattern.pattern})',
+    multiLine: true,
+  );
+
   @override
   TextSpan buildTextSpan({
     required BuildContext context,
@@ -82,19 +94,8 @@ class TokyoNightCodeController extends TextEditingController {
 
     // Build tokenized spans using RegExp matching
     // Token priority: Comments -> Strings -> Annotations -> Keywords / Types -> Numbers -> Functions -> Plain text
-    final combinedRegex = RegExp(
-      '(${_commentPattern.pattern})|'
-      '(${_stringPattern.pattern})|'
-      '(${_annotationPattern.pattern})|'
-      '(${_keywordPattern.pattern})|'
-      '(${_numberPattern.pattern})|'
-      '(${_typePattern.pattern})|'
-      '(${_functionCallPattern.pattern})',
-      multiLine: true,
-    );
-
     int lastMatchEnd = 0;
-    for (final match in combinedRegex.allMatches(rawText)) {
+    for (final match in _tokenPattern.allMatches(rawText)) {
       if (match.start > lastMatchEnd) {
         spans.add(
           TextSpan(

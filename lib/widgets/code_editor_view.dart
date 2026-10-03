@@ -93,79 +93,124 @@ class _CodeEditorViewState extends State<CodeEditorView> {
       child: Column(
         children: [
           // Editor Main Area (Line Numbers Gutter + Code Editor Text Area)
+          // LayoutBuilder exposes the scroll viewport height, which the
+          // windowed gutter needs to know how many line numbers to build.
           Expanded(
-            child: SingleChildScrollView(
-              controller: _verticalScroll,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Line Numbers Gutter
-                  Container(
-                    width: 44,
-                    padding: const EdgeInsets.only(
-                      top: 12,
-                      right: 8,
-                      bottom: 24,
-                    ),
-                    decoration: const BoxDecoration(
-                      color: TokyoNightColors.gutterBg,
-                      border: Border(
-                        right: BorderSide(color: Color(0xFF24283B), width: 1),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final viewportHeight = constraints.maxHeight;
+                return SingleChildScrollView(
+                  controller: _verticalScroll,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Line Numbers Gutter. Only the VISIBLE window of line
+                      // numbers is built (a 2 MiB file can carry tens of
+                      // thousands of lines); the window tracks the shared
+                      // vertical scroll controller and is padded a few lines
+                      // above and below the viewport.
+                      Container(
+                        width: 44,
+                        padding: const EdgeInsets.only(
+                          top: 12,
+                          right: 8,
+                          bottom: 24,
+                        ),
+                        decoration: const BoxDecoration(
+                          color: TokyoNightColors.gutterBg,
+                          border: Border(
+                            right: BorderSide(
+                              color: Color(0xFF24283B),
+                              width: 1,
+                            ),
+                          ),
+                        ),
+                        child: AnimatedBuilder(
+                          animation: _verticalScroll,
+                          builder: (context, _) {
+                            const slack = 4.0; // lines above and below
+                            final offset = _verticalScroll.hasClients
+                                ? _verticalScroll.offset
+                                : 0.0;
+                            var first = ((offset / lineHeight) - slack).floor();
+                            var last =
+                                ((offset + viewportHeight) / lineHeight + slack)
+                                    .ceil();
+                            if (first < 0) first = 0;
+                            if (last > _lineCount) last = _lineCount;
+                            final visibleCount = last - first;
+                            return SizedBox(
+                              width: double.infinity,
+                              height: _lineCount * lineHeight,
+                              child: Stack(
+                                children: [
+                                  Positioned(
+                                    top: first * lineHeight,
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
+                                      children: List.generate(
+                                        visibleCount,
+                                        (index) => SizedBox(
+                                          height: lineHeight,
+                                          child: Text(
+                                            '${first + index + 1}',
+                                            style: const TextStyle(
+                                              color:
+                                                  TokyoNightColors.gutterText,
+                                              fontFamily: 'monospace',
+                                              fontSize: 11.5,
+                                              height: 1.45,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: List.generate(
-                        _lineCount,
-                        (index) => SizedBox(
-                          height: lineHeight,
-                          child: Text(
-                            '${index + 1}',
-                            style: const TextStyle(
-                              color: TokyoNightColors.gutterText,
-                              fontFamily: 'monospace',
-                              fontSize: 11.5,
-                              height: 1.45,
+
+                      // Editable / Viewable Code Field with Horizontal
+                      // Scrolling
+                      Expanded(
+                        child: SingleChildScrollView(
+                          controller: _horizontalScroll,
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.only(
+                            left: 12,
+                            right: 24,
+                            top: 12,
+                            bottom: 24,
+                          ),
+                          child: SizedBox(
+                            width: 2500, // Stable canvas width to prevent layout shifts & keyboard dismissal
+                            child: TextField(
+                              controller: widget.controller,
+                              focusNode: _focusNode,
+                              readOnly: widget.readOnly,
+                              maxLines: null,
+                              keyboardType: TextInputType.multiline,
+                              cursorColor: TokyoNightColors.cyan,
+                              style: textStyle,
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                border: InputBorder.none,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                              onChanged: widget.onChanged,
                             ),
                           ),
                         ),
                       ),
-                    ),
+                    ],
                   ),
-
-                  // Editable / Viewable Code Field with Horizontal Scrolling
-                  Expanded(
-                    child: SingleChildScrollView(
-                      controller: _horizontalScroll,
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.only(
-                        left: 12,
-                        right: 24,
-                        top: 12,
-                        bottom: 24,
-                      ),
-                      child: SizedBox(
-                        width: 2500, // Stable canvas width to prevent layout shifts & keyboard dismissal
-                        child: TextField(
-                          controller: widget.controller,
-                          focusNode: _focusNode,
-                          readOnly: widget.readOnly,
-                          maxLines: null,
-                          keyboardType: TextInputType.multiline,
-                          cursorColor: TokyoNightColors.cyan,
-                          style: textStyle,
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            border: InputBorder.none,
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                          onChanged: widget.onChanged,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                );
+              },
             ),
           ),
 

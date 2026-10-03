@@ -83,15 +83,30 @@ class GitDiffParser {
   }
 }
 
-class GitDiffView extends StatelessWidget {
+class GitDiffView extends StatefulWidget {
   final String rawDiff;
   final ScrollController? scrollController;
 
   const GitDiffView({super.key, required this.rawDiff, this.scrollController});
 
   @override
+  State<GitDiffView> createState() => _GitDiffViewState();
+}
+
+class _GitDiffViewState extends State<GitDiffView> {
+  // Memoize the parse: re-parsing on every rebuild was expensive for large
+  // diffs. Re-parse only when the incoming diff actually changes.
+  String? _cachedRawDiff;
+  List<DiffLine> _parsedLines = const [];
+
+  @override
   Widget build(BuildContext context) {
-    final parsedLines = GitDiffParser.parse(rawDiff);
+    final rawDiff = widget.rawDiff;
+    if (_cachedRawDiff != rawDiff) {
+      _cachedRawDiff = rawDiff;
+      _parsedLines = GitDiffParser.parse(rawDiff);
+    }
+    final parsedLines = _parsedLines;
 
     if (parsedLines.isEmpty) {
       return Container(
@@ -112,7 +127,7 @@ class GitDiffView extends StatelessWidget {
     return Container(
       color: TokyoNightColors.background,
       child: SingleChildScrollView(
-        controller: scrollController,
+        controller: widget.scrollController,
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: IntrinsicWidth(
