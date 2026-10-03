@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import hashlib
 import hmac
@@ -309,6 +310,16 @@ def assert_safe_outbound_url(url: str) -> None:
             continue
         if _is_blocked_ip(ip):
             raise ValueError("URL must not target link-local or cloud metadata addresses")
+
+
+async def assert_safe_outbound_url_async(url: str) -> None:
+    """Async wrapper around :func:`assert_safe_outbound_url`.
+
+    ``socket.getaddrinfo`` is blocking: a slow or hanging DNS resolver would
+    otherwise stall the whole event loop on every LLM / search / proxy
+    request. The check itself runs in a worker thread.
+    """
+    await asyncio.to_thread(assert_safe_outbound_url, url)
 
 
 def is_allowed_preview_port(port: int) -> bool:

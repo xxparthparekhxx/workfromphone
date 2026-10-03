@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from backend.api.v1.router import api_v1_router
 from backend.core.auth import BearerTokenMiddleware
 from backend.core.config import settings
+from backend.core.middleware import HttpBodyLimitMiddleware
 from backend.core.security import AttemptLimiter, pins_match
 from backend.services.artifact_service import artifact_service
 
@@ -142,6 +143,9 @@ def create_app() -> FastAPI:
         openapi_url=None if token_configured else "/openapi.json",
     )
 
+    # Added first => innermost user middleware: an unauthenticated oversized
+    # request still gets the auth 401, and an authenticated one gets the 413.
+    application.add_middleware(HttpBodyLimitMiddleware)
     application.add_middleware(BearerTokenMiddleware)
     application.add_middleware(RateLimitMiddleware)
 

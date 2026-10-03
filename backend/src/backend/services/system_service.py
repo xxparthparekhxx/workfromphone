@@ -10,6 +10,7 @@ import time
 import psutil
 from fastapi import WebSocket, WebSocketDisconnect
 
+from backend.core.security import sanitized_child_env
 from backend.schemas.system import (
     BackendProcessMetrics,
     CpuMetrics,
@@ -232,6 +233,7 @@ class SystemService:
                 check=True,
                 text=True,
                 timeout=2,
+                env=sanitized_child_env(),
             )
             gpus = []
             for line in result.stdout.splitlines():

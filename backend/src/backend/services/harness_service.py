@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import os
 import random
@@ -9,12 +10,12 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 
 from backend.core.security import (
-    assert_safe_outbound_url,
+    assert_safe_outbound_url_async,
     is_allowed_preview_port,
     sanitized_child_env,
 )
 from backend.services.preview_service import preview_registry
-from backend.services.terminal_service import terminate_process_group
+from backend.services.terminal_service import communicate_with_cap, terminate_process_group
 from backend.schemas.llm import (
     ChatTaskRequest,
     FetchModelsRequest,
@@ -437,6 +438,30 @@ class HarnessService:
             return True
         return False
 
+    @classmethod
+    def _filter_secret_matches(cls, out: str) -> str:
+        """Drop search hits whose file path looks like a credential/secret file.
+
+        Grep lines are ``path:line:content``. ``git grep`` reports paths
+        relative to the repo root while the ``grep -rn`` fallback prefixes
+        ``./``; both are normalized before matching. Lines without a
+        ``path:`` prefix (no colon) are kept since no path can be extracted.
+        """
+        if not out:
+            return out
+        kept: List[str] = []
+        for line in out.splitlines():
+            if ":" not in line:
+                kept.append(line)
+                continue
+            path = line.split(":", 1)[0]
+            if path.startswith("./"):
+                path = path[2:]
+            if path and cls._is_secret_path(path):
+                continue
+            kept.append(line)
+        return "\n".join(kept)
+
     @staticmethod
     def _sanitize_path(project_root: Path, relative_path_str: str) -> Path:
         resolved = (project_root / relative_path_str.strip()).resolve()
@@ -456,6 +481,9 @@ class HarnessService:
                     return "Error: Command cannot be empty."
 
                 # Execute in project root
+                from backend.core.config import settings as _settings
+
+                max_bytes = int(_settings.MAX_TERMINAL_OUTPUT_BYTES)
                 process = await asyncio.create_subprocess_shell(
                     cmd,
                     cwd=str(project_root),
@@ -465,9 +493,20 @@ class HarnessService:
                     start_new_session=True,
                 )
                 try:
-                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=90.0)
+                    # Stream with a running byte cap so `cat /dev/zero`
+                    # cannot buffer gigabytes in memory before we see it.
+                    stdout, stderr, truncated = await asyncio.wait_for(
+                        communicate_with_cap(
+                            process,
+                            max_bytes,
+                            on_limit_exceeded=lambda: terminate_process_group(process),
+                        ),
+                        timeout=90.0,
+                    )
                     out_str = stdout.decode("utf-8", errors="replace")
                     err_str = stderr.decode("utf-8", errors="replace")
+                    if truncated:
+                        err_str += f"\n[Output truncated at {max_bytes} bytes]"
                     exit_code = process.returncode
 
                     result = []
@@ -573,6 +612,13 @@ class HarnessService:
                 query = args.get("query", "")
                 if not query:
                     return "Error: Query cannot be empty."
+                if len(query) > 200:
+                    return "Error: Query exceeds the 200-character limit."
+
+                from backend.core.config import settings as _settings
+
+                search_timeout = float(_settings.MAX_SEARCH_TIMEOUT_SECONDS)
+                search_cap = int(_settings.MAX_TOOL_OUTPUT_CHARS)
 
                 # Run the search without a shell: the query is model-supplied,
                 # and interpolating it into a command line would let it break
@@ -584,31 +630,46 @@ class HarnessService:
                         cwd=str(project_root),
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.DEVNULL,
+                        env=sanitized_child_env(),
                     )
-                    stdout, _ = await process.communicate()
+                    try:
+                        stdout, _, _ = await asyncio.wait_for(
+                            communicate_with_cap(process, search_cap),
+                            timeout=search_timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        with contextlib.suppress(Exception):
+                            await process.wait()
+                        raise
                     return (
                         process.returncode or 0,
                         stdout.decode("utf-8", errors="replace").strip(),
                     )
 
-                if len(query) > 200:
-                    return "Error: Query exceeds the 200-character limit."
-                code, out = await run_search(
-                    ["git", "grep", "-n", "-I", "-e", query],
-                )
-                if code != 0:
-                    _, out = await run_search(
-                        [
-                            "grep",
-                            "-rn",
-                            "--exclude-dir=.git",
-                            "--exclude-dir=node_modules",
-                            "--exclude-dir=.venv",
-                            "-e",
-                            query,
-                            ".",
-                        ],
+                try:
+                    code, out = await run_search(
+                        ["git", "grep", "-n", "-I", "-e", query],
                     )
+                    if code != 0:
+                        _, out = await run_search(
+                            [
+                                "grep",
+                                "-rn",
+                                "--exclude-dir=.git",
+                                "--exclude-dir=node_modules",
+                                "--exclude-dir=.venv",
+                                "-e",
+                                query,
+                                ".",
+                            ],
+                        )
+                except asyncio.TimeoutError:
+                    return f"Error: Search timed out after {search_timeout:.0f} seconds."
+                # Never surface matches from credential/secret files to the
+                # LLM (read_file already refuses those paths; searches leak
+                # them the same way if unfiltered).
+                out = cls._filter_secret_matches(out)
                 # Search hits are local file content: still cap them so a
                 # single tool call cannot blow the context window.
                 return cls._truncate_output(out if out else f"No matches found for '{query}'.")
@@ -722,7 +783,7 @@ class HarnessService:
             base_url = "https://openrouter.ai/api/v1"
         url = f"{base_url}/models"
         try:
-            assert_safe_outbound_url(url)
+            await assert_safe_outbound_url_async(url)
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
 
@@ -786,7 +847,7 @@ class HarnessService:
         base_url = req.llm_config.base_url.rstrip("/")
         completions_url = f"{base_url}/chat/completions"
         try:
-            assert_safe_outbound_url(completions_url)
+            await assert_safe_outbound_url_async(completions_url)
         except ValueError as exc:
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
             return
@@ -1099,7 +1160,7 @@ class HarnessService:
             base_url = "https://openrouter.ai/api/v1"
         completions_url = f"{base_url}/chat/completions"
         try:
-            assert_safe_outbound_url(completions_url)
+            await assert_safe_outbound_url_async(completions_url)
         except ValueError as exc:
             yield cls._sse({"type": "error", "message": str(exc)})
             return

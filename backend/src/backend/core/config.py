@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     MAX_TERMINAL_OUTPUT_BYTES: int = 1 * 1024 * 1024
     MAX_TERMINAL_TIMEOUT_SECONDS: float = 120.0
     MAX_PTYS: int = 8
+    MAX_GIT_OUTPUT_BYTES: int = 2 * 1024 * 1024
+    MAX_SEARCH_TIMEOUT_SECONDS: float = 60.0
+    MAX_HTTP_BODY_BYTES: int = 16 * 1024 * 1024
     PREVIEW_MAX_BODY_BYTES: int = 10 * 1024 * 1024
     ARTIFACT_MAX_COUNT: int = 500
     # Per-route fixed-window rate limits (requests per minute per client IP).

@@ -8,6 +8,7 @@ LLM SSRF/max_tokens guardrails, secret-file tool refusal, output truncation.
 
 import asyncio
 import stat
+import time
 from pathlib import Path
 
 import pytest
@@ -455,10 +456,188 @@ def test_terminal_run_rejects_outside_workspace(tmp_path: Path, monkeypatch):
 
 def test_git_diff_size_is_bounded_by_endpoint(tmp_path: Path):
     # Untracked huge file renders through the synthetic "new file" diff path.
-    (tmp_path / "huge.txt").write_text("z\n" * 200_000, encoding="utf-8")
+    # 1.2M lines * 2 bytes = 2.4 MiB, over the 2 MiB file-read cap.
+    (tmp_path / "huge.txt").write_bytes(b"z\n" * 1_200_000)
     resp = client.get(
         "/api/v1/git/diff",
         params={"project_path": str(tmp_path), "relative_path": "huge.txt"},
     )
-    # Not a repo: empty diff is fine, but the endpoint must not 500/OOM.
-    assert resp.status_code in {200, 500} or resp.status_code == 200
+    # Not a repo: the synthetic diff still succeeds and must not 500/OOM.
+    assert resp.status_code == 200
+    diff = resp.json()["diff"]
+    assert "[File truncated" in diff
+    # The read is capped at MAX_GIT_OUTPUT_BYTES; the "+" per line means the
+    # rendered diff is at most ~1.5x that plus the marker.
+    assert len(diff) < int(settings.MAX_GIT_OUTPUT_BYTES * 1.5) + 4096
+
+
+# ---------------------------------------------------------------------------
+# Subprocess hygiene: sanitized env, bounded output, PTY finalize
+# ---------------------------------------------------------------------------
+
+
+def test_git_commands_run_with_sanitized_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import backend.services.git_service as git_module
+
+    monkeypatch.setenv("ACCESS_TOKEN", "super-secret")
+    seen: dict = {}
+
+    class _FakeStream:
+        async def read(self, n=-1):
+            return b""
+
+    class _FakeProcess:
+        pid = 4242
+        returncode = 0
+
+        def __init__(self) -> None:
+            self.stdout = _FakeStream()
+            self.stderr = _FakeStream()
+
+        def kill(self) -> None:
+            pass
+
+        async def wait(self):
+            return 0
+
+    async def fake_exec(*args, **kwargs):
+        seen["env"] = kwargs.get("env")
+        return _FakeProcess()
+
+    monkeypatch.setattr(git_module.asyncio, "create_subprocess_exec", fake_exec)
+    status = asyncio.run(git_module.git_service.get_status(str(tmp_path)))
+    assert status.is_repo is False
+    assert "env" in seen, "git subprocess was not launched with an explicit env"
+    assert "ACCESS_TOKEN" not in seen["env"]
+
+
+def test_terminal_run_kills_process_at_output_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # `cat /dev/zero` writes unboundedly: the cap must be hit mid-stream and
+    # the process killed, not buffered until timeout.
+    monkeypatch.setattr(settings, "MAX_TERMINAL_OUTPUT_BYTES", 2048)
+    started = time.monotonic()
+    resp = client.post(
+        "/api/v1/terminal/run",
+        json={
+            "project_path": str(tmp_path),
+            "command": "cat /dev/zero",
+            "timeout_seconds": 30,
+        },
+    )
+    elapsed = time.monotonic() - started
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["timed_out"] is False
+    assert "[Output truncated" in data["stderr"]
+    body = data["stdout"] + data["stderr"]
+    assert len(body) <= 2048 + 512
+    assert elapsed < 5, f"output cap was not enforced mid-stream (took {elapsed:.1f}s)"
+
+
+def test_pty_finalizes_when_background_child_holds_slave(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # Regression: a background job (`sleep 30 &`) keeps the PTY slave open
+    # after the shell exits, so stream_output never sees EIO; finalize must
+    # force-terminate within the grace period instead of leaking the MAX_PTYS
+    # slot forever.
+    import json
+    import threading
+
+    # bash has fast startup and predictable job-control semantics; on some
+    # dev machines $SHELL is fish, whose startup banner slows the session.
+    monkeypatch.setenv("SHELL", "/bin/bash")
+
+    result: dict = {}
+
+    def run_session() -> None:
+        with client.websocket_connect("/api/v1/terminal/ws", params={"project_path": str(tmp_path)}) as websocket:
+            ready = websocket.receive_json()
+            assert ready["type"] == "ready"
+            # Wait until the shell has produced its first output (prompt).
+            for _ in range(100):
+                message = websocket.receive_json()
+                if message["type"] == "output":
+                    break
+                if message["type"] == "exit":
+                    raise AssertionError("shell exited during startup")
+            # Job control on (interactive bash default): the background job
+            # gets its own process group, so the teardown killpg cannot reap
+            # it and the slave stays open past the shell's death.
+            websocket.send_text(json.dumps({"type": "input", "data": "sleep 30 &\n"}))
+            websocket.send_text(json.dumps({"type": "input", "data": "exit\n"}))
+            for _ in range(1000):
+                message = websocket.receive_json()
+                if message["type"] == "exit":
+                    result["exit"] = message
+                    return
+            raise AssertionError("no exit event received")
+
+    thread = threading.Thread(target=run_session, daemon=True)
+    thread.start()
+    thread.join(timeout=30)
+    assert not thread.is_alive(), "PTY session did not finalize after the shell exited"
+    assert "exit" in result
+
+
+# ---------------------------------------------------------------------------
+# search_project: secret-path filtering
+# ---------------------------------------------------------------------------
+
+
+def test_search_project_filters_secret_paths(tmp_path: Path):
+    (tmp_path / ".env").write_text("MY_TOKEN=hunter2-xyz\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("plain text here\n", encoding="utf-8")
+
+    output = asyncio.run(harness_service.execute_tool(tmp_path, "search_project", {"query": "hunter2"}))
+    assert "MY_TOKEN=hunter2-xyz" not in output
+    assert ".env" not in output
+    assert "No matches found" in output
+
+    literal = asyncio.run(harness_service.execute_tool(tmp_path, "search_project", {"query": "plain"}))
+    assert "notes.txt" in literal
+
+
+# ---------------------------------------------------------------------------
+# HTTP request body limit
+# ---------------------------------------------------------------------------
+
+
+def test_http_body_limit_returns_413(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "MAX_HTTP_BODY_BYTES", 128)
+    resp = client.post(
+        "/api/v1/terminal/run",
+        json={"project_path": str(tmp_path), "command": "true", "padding": "x" * 1000},
+    )
+    assert resp.status_code == 413
+    assert resp.json() == {"detail": "Request body too large"}
+    # A small body still passes.
+    ok = client.post(
+        "/api/v1/terminal/run",
+        json={"project_path": str(tmp_path), "command": "true"},
+    )
+    assert ok.status_code == 200
+
+
+def test_http_body_limit_runs_after_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "MAX_HTTP_BODY_BYTES", 128)
+    previous = settings.ACCESS_TOKEN
+    settings.ACCESS_TOKEN = "body-limit-token"
+    try:
+        # Unauthenticated + oversized: the auth 401 wins (auth runs first).
+        denied = client.post(
+            "/api/v1/terminal/run",
+            json={"project_path": str(tmp_path), "command": "true", "padding": "x" * 1000},
+        )
+        assert denied.status_code == 401
+        # Authenticated + oversized: 413.
+        too_large = client.post(
+            "/api/v1/terminal/run",
+            json={
+                "project_path": str(tmp_path),
+                "command": "true",
+                "padding": "x" * 1000,
+            },
+            headers={"Authorization": "Bearer body-limit-token"},
+        )
+        assert too_large.status_code == 413
+    finally:
+        settings.ACCESS_TOKEN = previous

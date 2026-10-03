@@ -1,6 +1,8 @@
+import contextlib
+
 import httpx
 from fastapi import APIRouter, HTTPException, Request, WebSocket
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from backend.core.security import is_allowed_preview_port, should_forward_proxy_header
 from backend.schemas.preview import (
@@ -157,15 +159,31 @@ async def proxy_preview(
         and not _looks_like_asset(upstream_path)
     ):
         fallback_path = base_prefix or "/"
+        with contextlib.suppress(Exception):
+            await response.aclose()
         response = await _issue(client, request, entry.port, fallback_path, max_body=max_body)
 
-    if len(response.content) > max_body:
+    # Stream the upstream body with a running byte counter instead of
+    # buffering the full response first (an unbounded upstream would OOM the
+    # backend before the limit could ever be checked).
+    chunks: list[bytes] = []
+    total = 0
+    try:
+        async for chunk in response.aiter_bytes():
+            total += len(chunk)
+            if total > max_body:
+                break
+            chunks.append(chunk)
+    finally:
+        with contextlib.suppress(Exception):
+            await response.aclose()
+    if total > max_body:
         raise HTTPException(
             status_code=502,
             detail=f"Upstream preview body exceeds the {max_body}-byte proxy limit",
         )
-    return Response(
-        content=response.content,
+    return StreamingResponse(
+        iter(chunks),
         status_code=response.status_code,
         headers=_filter_response_headers(response.headers),
         media_type=response.headers.get("content-type"),
@@ -193,14 +211,17 @@ async def _issue(
         and should_forward_proxy_header(key)
     }
     upstream_url = f"http://127.0.0.1:{port}{upstream_path}"
+    http_request = client.build_request(
+        request.method,
+        upstream_url,
+        params=request.query_params,
+        headers=headers,
+        content=body,
+    )
     try:
-        return await client.request(
-            request.method,
-            upstream_url,
-            params=request.query_params,
-            headers=headers,
-            content=body,
-        )
+        # `stream=True`: the body is read lazily by the caller with a size
+        # cap instead of being buffered in full by httpx here.
+        return await client.send(http_request, stream=True)
     except httpx.RequestError as exc:
         raise HTTPException(
             status_code=502,

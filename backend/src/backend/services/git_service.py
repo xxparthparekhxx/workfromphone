@@ -1,9 +1,13 @@
 import asyncio
+import contextlib
 import os
 import shutil
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from backend.core.config import settings
+from backend.core.security import sanitized_child_env
+from backend.services.terminal_service import communicate_with_cap
 from backend.schemas.git import (
     GitActionResult,
     GitCommitRequest,
@@ -46,14 +50,28 @@ class GitService:
             cwd=str(project_root),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=sanitized_child_env(),
         )
         try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            # Stream the output with a running byte cap instead of buffering
+            # an unbounded `git diff` in memory.
+            stdout, stderr, truncated = await asyncio.wait_for(
+                communicate_with_cap(
+                    process,
+                    int(settings.MAX_GIT_OUTPUT_BYTES),
+                    on_limit_exceeded=process.kill,
+                ),
+                timeout=timeout,
+            )
             out_str = stdout.decode("utf-8", errors="replace")
             err_str = stderr.decode("utf-8", errors="replace")
+            if truncated:
+                out_str += "\n[output truncated]"
             return process.returncode or 0, out_str, err_str
         except asyncio.TimeoutError:
             process.kill()
+            with contextlib.suppress(Exception):
+                await process.wait()
             return -1, "", "Git command timed out."
 
     @classmethod
@@ -209,8 +227,19 @@ class GitService:
                     return GitDiffResponse(diff="", path=rel_clean, staged=staged)
                 if target_file.exists() and target_file.is_file():
                     try:
-                        with open(target_file, "r", encoding="utf-8", errors="replace") as f:
-                            content = f.read()
+                        # Cap the read so a multi-GB untracked file cannot
+                        # OOM the backend while rendering its diff.
+                        max_file_bytes = int(settings.MAX_GIT_OUTPUT_BYTES)
+                        with open(target_file, "rb") as f:
+                            raw = f.read(max_file_bytes + 1)
+                        if len(raw) > max_file_bytes:
+                            raw = raw[:max_file_bytes]
+                            content = (
+                                raw.decode("utf-8", errors="replace")
+                                + f"\n[File truncated at {max_file_bytes} bytes]"
+                            )
+                        else:
+                            content = raw.decode("utf-8", errors="replace")
                         diff_lines = [
                             f"diff --git a/{rel_clean} b/{rel_clean}",
                             "new file mode 100644",

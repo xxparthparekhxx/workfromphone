@@ -6,7 +6,7 @@ from typing import List
 import httpx
 
 from backend.core.config import settings
-from backend.core.security import assert_safe_outbound_url
+from backend.core.security import assert_safe_outbound_url_async
 from backend.schemas.search import SearchRequest, SearchResponse, SearchResultItem
 
 
@@ -18,7 +18,7 @@ class SearchService:
         base_url: str,
     ) -> List[SearchResultItem]:
         endpoint = f"{base_url.rstrip('/')}/search"
-        assert_safe_outbound_url(endpoint)
+        await assert_safe_outbound_url_async(endpoint)
         # NOTE: redirects are followed manually below (max 3 hops, each hop
         # re-validated) so a compromised SearXNG cannot bounce us at a
         # metadata / link-local URL. DNS is validated at request time; see
@@ -155,7 +155,7 @@ class SearchService:
         current_url = url
         current_params = params
         for _ in range(4):
-            assert_safe_outbound_url(current_url)
+            await assert_safe_outbound_url_async(current_url)
             if method == "POST":
                 resp = await client.post(current_url, data=current_params, headers=headers)
             else:
@@ -172,17 +172,24 @@ class SearchService:
 
     @staticmethod
     async def _follow_public_redirects(client, resp, url: str):
-        for _ in range(3):
+        """Follow up to 5 redirect hops, re-validating every hop.
+
+        Each ``location`` is resolved relative to the current URL and run
+        through the same outbound-URL safety check as the initial request;
+        an unsafe hop raises (like the initial validation) and aborts the
+        search instead of being fetched.
+        """
+        current_url = url
+        for _ in range(5):
             if resp.status_code not in {301, 302, 303, 307, 308}:
                 return resp
             location = resp.headers.get("location", "")
             if not location:
                 return resp
-            next_url = httpx.URL(url).join(location).__str__()
-            if next_url.startswith("http"):
-                return resp  # fixed DDG endpoint: do not chase off-host
-            url = next_url
-            resp = await client.get(url)
+            next_url = httpx.URL(current_url).join(location).__str__()
+            await assert_safe_outbound_url_async(next_url)
+            current_url = next_url
+            resp = await client.get(current_url)
         return resp
 
     async def search(self, req: SearchRequest) -> SearchResponse:

@@ -37,6 +37,58 @@ async def terminate_process_group(process: asyncio.subprocess.Process) -> None:
         await process.wait()
 
 
+async def communicate_with_cap(
+    process: asyncio.subprocess.Process,
+    max_bytes: int,
+    *,
+    on_limit_exceeded=None,
+    chunk_size: int = 64 * 1024,
+) -> tuple[bytes, bytes, bool]:
+    """Stream a subprocess's stdout/stderr into bounded buffers.
+
+    Unlike ``process.communicate()``, memory stays bounded: the two streams
+    together stop accumulating once ``max_bytes`` is reached. When the cap is
+    hit, ``on_limit_exceeded`` is invoked (sync or async; callers should kill
+    the process) and the remaining output is drained and discarded so the
+    process can exit without filling the pipe buffers.
+
+    Returns ``(stdout, stderr, truncated)``.
+    """
+    stdout_buf = bytearray()
+    stderr_buf = bytearray()
+    truncated = False
+
+    async def _pump(stream, buf: bytearray) -> None:
+        nonlocal truncated
+        if stream is None:
+            return
+        while True:
+            chunk = await stream.read(chunk_size)
+            if not chunk:
+                return
+            space = max_bytes - len(stdout_buf) - len(stderr_buf)
+            if len(chunk) <= space:
+                buf.extend(chunk)
+                continue
+            if space > 0:
+                buf.extend(chunk[:space])
+            truncated = True
+            callback = on_limit_exceeded() if on_limit_exceeded is not None else None
+            if callback is not None:
+                await callback
+            while await stream.read(chunk_size):
+                pass
+            return
+
+    await asyncio.gather(
+        _pump(process.stdout, stdout_buf),
+        _pump(process.stderr, stderr_buf),
+    )
+    with contextlib.suppress(Exception):
+        await process.wait()
+    return bytes(stdout_buf), bytes(stderr_buf), truncated
+
+
 class TerminalService:
     _DEFAULT_COLS = 80
     _DEFAULT_ROWS = 24
@@ -71,6 +123,30 @@ class TerminalService:
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         return env
+
+    @staticmethod
+    async def _read_from_fd(fd: int, size: int) -> bytes:
+        """Read from the pty master via the event loop's selector.
+
+        A thread blocked in ``os.read`` is not woken when the fd is closed
+        (the open file stays alive until the peer closes), so a
+        ``to_thread(os.read)`` worker can pin its thread-pool slot for the
+        lifetime of a background child holding the slave. Waiting on the
+        selector's readable event is cancellable and pins nothing.
+        """
+        loop = asyncio.get_running_loop()
+        readable: asyncio.Future = loop.create_future()
+
+        def _mark_readable() -> None:
+            if not readable.done():
+                readable.set_result(None)
+
+        loop.add_reader(fd, _mark_readable)
+        try:
+            await readable
+        finally:
+            loop.remove_reader(fd)
+        return os.read(fd, size)
 
     @staticmethod
     def _set_pty_size(
@@ -139,19 +215,17 @@ class TerminalService:
         )
 
         timed_out = False
-        truncated = False
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
+            # Stream stdout/stderr with a running byte cap (e.g. `cat
+            # /dev/zero`) instead of buffering the full output in memory.
+            stdout, stderr, truncated = await asyncio.wait_for(
+                communicate_with_cap(
+                    process,
+                    max_bytes,
+                    on_limit_exceeded=lambda: terminate_process_group(process),
+                ),
                 timeout=timeout,
             )
-            # Cap buffered output (e.g. `cat /dev/zero`) instead of OOMing.
-            if len(stdout) > max_bytes:
-                stdout = stdout[:max_bytes]
-                truncated = True
-            if len(stderr) > max_bytes:
-                stderr = stderr[:max_bytes]
-                truncated = True
             out_str = stdout.decode("utf-8", errors="replace")
             err_str = stderr.decode("utf-8", errors="replace")
             if truncated:
@@ -219,7 +293,7 @@ class TerminalService:
             decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
             while True:
                 try:
-                    chunk = await asyncio.to_thread(os.read, master_fd, 4096)
+                    chunk = await cls._read_from_fd(master_fd, 4096)
                 except OSError:
                     break
                 if not chunk:
@@ -336,7 +410,17 @@ class TerminalService:
             )
 
             if wait_task in done:
-                await output_task
+                # A background child (e.g. `sleep 3600 &`) keeps the PTY slave
+                # open, so stream_output never sees EIO. Give it a grace
+                # period, then force-finalize instead of leaking the slot.
+                try:
+                    await asyncio.wait_for(output_task, timeout=5.0)
+                except asyncio.TimeoutError:
+                    await terminate_process_group(process)
+                    with contextlib.suppress(OSError):
+                        os.close(master_fd)
+                    master_fd = None
+                    output_task.cancel()
                 await websocket.send_json({
                     "type": "exit",
                     "exit_code": process.returncode or 0,
