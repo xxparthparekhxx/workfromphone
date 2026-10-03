@@ -75,15 +75,34 @@ if [ -z "$MANIFEST_JSON" ]; then
 fi
 
 # Extract version, URL, and sha256
-VERSION="$(printf '%s' "$MANIFEST_JSON" | grep -o '"version": *"[^"]*"' | head -n 1 | cut -d'"' -f4 || echo "unknown")"
+VERSION="$(printf '%s' "$MANIFEST_JSON" | grep -o '"version": *"[^"]*"' | head -n 1 | cut -d'"' -f4 || true)"
 ARCH_SECTION="$(printf '%s' "$MANIFEST_JSON" | grep -A 5 "\"$ARCH\":" || true)"
 DOWNLOAD_URL="$(printf '%s' "$ARCH_SECTION" | grep -o '"url": *"[^"]*"' | head -n 1 | cut -d'"' -f4 || true)"
 CHECKSUM="$(printf '%s' "$ARCH_SECTION" | grep -o '"sha256": *"[^"]*"' | head -n 1 | cut -d'"' -f4 || true)"
+
+if [ -z "$VERSION" ]; then
+  log_error "manifest is missing a 'version' field"
+  exit 1
+fi
 
 if [ -z "$DOWNLOAD_URL" ] || [ -z "$CHECKSUM" ]; then
   log_error "Could not find release artifact for architecture: $ARCH in manifest."
   exit 1
 fi
+
+# Refuse cleartext downloads: a hostile/forked manifest must not be able to
+# direct the installer at an http:// endpoint (local test manifests are the
+# only allowed exception).
+case "$DOWNLOAD_URL" in
+  https://*)
+    ;;
+  http://127.0.0.1* | http://localhost*)
+    ;;
+  *)
+    log_error "Release download URL must use https:// (got: $DOWNLOAD_URL)"
+    exit 1
+    ;;
+esac
 
 log_info "Target Version: v$VERSION"
 log_info "Downloading $DOWNLOAD_URL..."
