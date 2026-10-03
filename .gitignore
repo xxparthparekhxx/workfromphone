@@ -69,3 +69,4 @@ app.*.map.json
 
 # On-device container: proot binaries are fetched, not checked in
 android/app/src/main/jniLibs/*/*.so
+android/app/src/main/jniLibs/.proot-fetched-version

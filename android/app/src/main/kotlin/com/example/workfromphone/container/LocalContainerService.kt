@@ -14,6 +14,7 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -69,6 +70,10 @@ class LocalContainerService : Service() {
 
     private val binder = LocalBinder()
     private val executor = Executors.newSingleThreadExecutor()
+    // Guards against a fast double Start dispatching two spawns (the second
+    // dies on port bind and overwrites [guest], so shutdown would only kill
+    // the last one).
+    private val starting = AtomicBoolean(false)
     private var guest: Process? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -108,6 +113,10 @@ class LocalContainerService : Service() {
         activePort = config.port
         val manager = RootfsManager(this)
         executor.execute {
+            // The outer [running] check above happens before spawn; this one
+            // closes the race where two Start commands both pass it and both
+            // dispatch spawn lambdas.
+            if (running || !starting.compareAndSet(false, true)) return@execute
             try {
                 manager.logFile().writeText(
                     "[container] start ${java.util.Date()}\n" +
@@ -147,6 +156,9 @@ class LocalContainerService : Service() {
                         .appendText("\n[container] start failed: ${e.message}\n")
                 }
                 shutdown()
+            } finally {
+                // [running] was set (success) or shutdown() ran (failure).
+                starting.set(false)
             }
         }
     }
@@ -155,13 +167,17 @@ class LocalContainerService : Service() {
 
     private fun shutdown() {
         running = false
-        executor.execute {
+        val work = {
             ProotRunner.stop(guest)
             guest = null
             releaseWakeLock()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
+        // If the executor was already torn down by onDestroy (destroyed
+        // service + in-flight boot lambda failing concurrently), a queued
+        // task would be rejected and the guest process would be orphaned.
+        if (executor.isShutdown) work() else executor.execute(work)
     }
 
     private fun acquireWakeLock() {
@@ -221,8 +237,15 @@ class LocalContainerService : Service() {
     }
 
     override fun onDestroy() {
-        ProotRunner.stop(guest)
-        guest = null
+        // ProotRunner.stop() sleeps up to ~1.5 s for a graceful teardown;
+        // never block the main thread while the system kills the service.
+        val process = guest
+        val stopThread = Thread({
+            ProotRunner.stop(process)
+            guest = null
+        }, "wfp-container-stop")
+        stopThread.isDaemon = true
+        stopThread.start()
         running = false
         releaseWakeLock()
         executor.shutdownNow()

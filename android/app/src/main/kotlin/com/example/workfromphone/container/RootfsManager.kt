@@ -197,6 +197,7 @@ object TarGz {
         var lastReported = -1
         GZIPInputStream(CountingInputStream(FileInputStream(archive)) { processed = it }).use { gzip ->
             var pendingLongName: String? = null
+            var pendingLongTarget: String? = null
             val pendingHardLinks = mutableListOf<Pair<File, File>>()
             while (true) {
                 val header = ByteArray(512)
@@ -218,7 +219,16 @@ object TarGz {
                 }
                 when (type) {
                     'L' -> {
+                        // GNU longname: the data block holds the name of the
+                        // next entry; must be consumed to stay aligned.
                         pendingLongName = readSized(gzip, size).toString(Charsets.UTF_8).trimEnd('\u0000')
+                        skipPadding(gzip, size)
+                    }
+                    'K' -> {
+                        // GNU longlink: the data block holds the LINK TARGET
+                        // of the next entry (symlink/hardlink whose target
+                        // overflows the 100-byte header field).
+                        pendingLongTarget = readSized(gzip, size).toString(Charsets.UTF_8).trimEnd('\u0000')
                         skipPadding(gzip, size)
                     }
                     '5' -> {
@@ -226,7 +236,9 @@ object TarGz {
                         setMode(target, header)
                     }
                     '2' -> {
-                        val linkTarget = header.copyOfRange(157, 257).cstring()
+                        val linkTarget = pendingLongTarget
+                            ?: header.copyOfRange(157, 257).cstring()
+                        pendingLongTarget = null
                         target.parentFile?.mkdirs()
                         target.delete()
                         java.nio.file.Files.createSymbolicLink(
@@ -238,7 +250,9 @@ object TarGz {
                         // Hard link: linkname holds the archive-relative path
                         // of an entry that must share the same inode
                         // (debootstrap rootfs images are full of these).
-                        val linkTarget = header.copyOfRange(157, 257).cstring()
+                        val linkTarget = pendingLongTarget
+                            ?: header.copyOfRange(157, 257).cstring()
+                        pendingLongTarget = null
                         val source = File(destDir, linkTarget).canonicalFile
                         require(source.path == destDir.canonicalPath ||
                             source.path.startsWith(destDir.canonicalPath + File.separator)) {
@@ -315,7 +329,10 @@ object TarGz {
         var offset = 0
         while (offset < buffer.size) {
             val read = input.read(buffer, offset, buffer.size - offset)
-            if (read < 0) return offset > 0
+            // A short read at EOF is a truncated final header block: stop
+            // (normal end-of-archive is the all-zero header; extraction is
+            // SHA-256-gated upstream, so stopping is safe).
+            if (read < 0) return offset == 0
             offset += read
         }
         return true

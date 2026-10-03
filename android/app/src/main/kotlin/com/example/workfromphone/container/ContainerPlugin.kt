@@ -43,6 +43,10 @@ class ContainerPlugin(private val context: Context) : MethodChannel.MethodCallHa
     private val executor = Executors.newSingleThreadExecutor()
     val progressHandler = ProgressEvents()
 
+    /** Guards against overlapping beginSetup dispatches (download+extract). */
+    @Volatile
+    private var setupInProgress = false
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "getStatus" -> getStatus(result)
@@ -65,31 +69,37 @@ class ContainerPlugin(private val context: Context) : MethodChannel.MethodCallHa
     private fun manager() = RootfsManager(context)
 
     private fun getStatus(result: MethodChannel.Result) {
-        val manager = manager()
-        val proot = manager.resolveProotBinary()
-        result.success(
-            mapOf(
-                "installed" to manager.isInstalled(),
-                "version" to manager.installedVersion(),
-                "running" to LocalContainerService.running,
-                "port" to LocalContainerService.activePort,
-                "healthy" to (LocalContainerService.running && ProotRunner.isHealthy(
-                    LocalContainerService.activePort,
-                )),
-                "prootFound" to (proot != null),
-                "prootRuntimeReady" to manager.isProotRuntimeReady(),
-                "prootPath" to (proot?.absolutePath ?: ""),
-                "workspace" to manager.workspaceDir.absolutePath,
-                "abi" to (Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"),
-            ),
-        )
+        // isHealthy() does a blocking HTTP probe (2 s connect + 2 s read);
+        // keep the whole body off the method-channel/UI thread.
+        executor.execute {
+            val manager = manager()
+            val proot = manager.resolveProotBinary()
+            result.success(
+                mapOf(
+                    "installed" to manager.isInstalled(),
+                    "version" to manager.installedVersion(),
+                    "running" to LocalContainerService.running,
+                    "port" to LocalContainerService.activePort,
+                    "healthy" to (LocalContainerService.running && ProotRunner.isHealthy(
+                        LocalContainerService.activePort,
+                    )),
+                    "prootFound" to (proot != null),
+                    "prootRuntimeReady" to manager.isProotRuntimeReady(),
+                    "prootPath" to (proot?.absolutePath ?: ""),
+                    "workspace" to manager.workspaceDir.absolutePath,
+                    "abi" to (Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"),
+                ),
+            )
+        }
     }
 
     private fun beginSetup(call: MethodCall, result: MethodChannel.Result) {
         val url = call.argument<String>("url")?.trim().orEmpty()
         val sha256 = call.argument<String>("sha256")?.trim().orEmpty()
         val version = call.argument<String>("version")?.trim().orEmpty()
-        if (url.isEmpty() || sha256.length != 64 || version.isEmpty()) {
+        val sha256Valid = sha256.length == 64 &&
+            sha256.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+        if (url.isEmpty() || !sha256Valid || version.isEmpty()) {
             result.error("bad-args", "url, sha256 (64 hex), and version are required", null)
             return
         }
@@ -103,6 +113,13 @@ class ContainerPlugin(private val context: Context) : MethodChannel.MethodCallHa
             result.error("insecure-url", "Rootfs URL must use https", null)
             return
         }
+        // Method calls arrive on the UI thread, so this check-then-set is
+        // atomic with respect to other beginSetup calls.
+        if (setupInProgress) {
+            result.error("setup-in-progress", "Rootfs setup is already in progress", null)
+            return
+        }
+        setupInProgress = true
         executor.execute {
             val manager = manager()
             try {
@@ -120,6 +137,8 @@ class ContainerPlugin(private val context: Context) : MethodChannel.MethodCallHa
                 progressHandler.emit(
                     mapOf("phase" to "error", "progress" to 0, "message" to (e.message ?: "$e")),
                 )
+            } finally {
+                setupInProgress = false
             }
         }
         result.success(mapOf("started" to true))
@@ -176,17 +195,20 @@ class ContainerPlugin(private val context: Context) : MethodChannel.MethodCallHa
     private fun getLogs(call: MethodCall, result: MethodChannel.Result) {
         val maxBytes = (call.argument<Number>("maxBytes")?.toLong() ?: 65536L)
             .coerceIn(4096L, 262144L)
-        val manager = manager()
-        result.success(
-            mapOf(
-                "backend" to tail(manager.logFile(), maxBytes),
-                "bootstrap" to tail(
-                    java.io.File(manager.containerDir, "bootstrap.log"),
-                    maxBytes,
+        // Log reads can block on I/O; keep them off the UI thread.
+        executor.execute {
+            val manager = manager()
+            result.success(
+                mapOf(
+                    "backend" to tail(manager.logFile(), maxBytes),
+                    "bootstrap" to tail(
+                        java.io.File(manager.containerDir, "bootstrap.log"),
+                        maxBytes,
+                    ),
+                    "nativeLibs" to describeNativeLibs(),
                 ),
-                "nativeLibs" to describeNativeLibs(),
-            ),
-        )
+            )
+        }
     }
 
     /** Lists nativeLibraryDir with sizes + md5 so we can tell whether the
@@ -241,15 +263,19 @@ class ContainerPlugin(private val context: Context) : MethodChannel.MethodCallHa
 
     private fun tail(file: java.io.File, maxBytes: Long): String {
         if (!file.isFile) return "(no log yet: ${file.name})"
-        val bytes = file.readBytes()
-        val slice = if (bytes.size > maxBytes) {
-            bytes.copyOfRange(bytes.size - maxBytes.toInt(), bytes.size)
-        } else {
-            bytes
+        // Read only the last maxBytes: the log grows without bound.
+        val length = file.length()
+        val sliceSize = minOf(maxBytes, length).toInt()
+        val slice = ByteArray(sliceSize)
+        if (sliceSize > 0) {
+            java.io.RandomAccessFile(file).use { raf ->
+                raf.seek(length - sliceSize)
+                raf.readFully(slice)
+            }
         }
         // Drop a leading partial line so the view starts clean.
         val text = slice.toString(Charsets.UTF_8)
-        val firstNewline = if (bytes.size > maxBytes) text.indexOf('\n') else -1
+        val firstNewline = if (length > maxBytes) text.indexOf('\n') else -1
         return if (firstNewline >= 0) text.substring(firstNewline + 1) else text
     }
 
