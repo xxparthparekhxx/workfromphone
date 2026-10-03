@@ -2,6 +2,7 @@ import asyncio
 from importlib import import_module
 import json
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -1190,22 +1191,34 @@ def test_git_status_is_clean_on_a_fresh_checkout(git_repo: Path):
 
 
 def test_top_processes_are_ranked_by_measured_cpu():
-    service = system_service_module.SystemService()
-    assert not service._processes_primed
+    stop_event = threading.Event()
 
-    snapshot = asyncio.run(service.snapshot())
-    processes = snapshot.top_processes
+    def burn():
+        while not stop_event.is_set():
+            _ = sum(i * i for i in range(10_000))
 
-    assert processes
-    assert service._processes_primed
-    # Priming means the very first snapshot already carries real readings
-    # rather than the all-zero values psutil returns for a first sample.
-    assert any(process.cpu_percent > 0.0 for process in processes)
-    assert processes == sorted(
-        processes,
-        key=lambda process: (process.cpu_percent, process.memory_percent),
-        reverse=True,
-    )
+    worker = threading.Thread(target=burn, daemon=True)
+    worker.start()
+    try:
+        service = system_service_module.SystemService()
+        assert not service._processes_primed
+
+        snapshot = asyncio.run(service.snapshot())
+        processes = snapshot.top_processes
+
+        assert processes
+        assert service._processes_primed
+        # Priming means the very first snapshot already carries real readings
+        # rather than the all-zero values psutil returns for a first sample.
+        assert any(process.cpu_percent > 0.0 for process in processes)
+        assert processes == sorted(
+            processes,
+            key=lambda process: (process.cpu_percent, process.memory_percent),
+            reverse=True,
+        )
+    finally:
+        stop_event.set()
+        worker.join(timeout=1)
 
 
 # ---------------------------------------------------------------------------
