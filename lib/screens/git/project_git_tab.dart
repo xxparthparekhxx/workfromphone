@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:workfromphone/models/git_status.dart';
 import 'package:workfromphone/models/project_directory.dart';
 import 'package:workfromphone/services/api_service.dart';
@@ -24,6 +25,7 @@ class ProjectGitTab extends StatefulWidget {
 
 class _ProjectGitTabState extends State<ProjectGitTab> {
   final TextEditingController _commitMsgCtrl = TextEditingController();
+  final FocusNode _commitFocusNode = FocusNode();
   GitStatusData? _status;
   bool _isLoading = false;
   bool _isCommitting = false;
@@ -39,6 +41,7 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
   @override
   void dispose() {
     _commitMsgCtrl.dispose();
+    _commitFocusNode.dispose();
     super.dispose();
   }
 
@@ -364,6 +367,9 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
     };
 
     return InkWell(
+      // The same path can appear in both the staged and unstaged lists, so
+      // the key must be qualified by which list it belongs to.
+      key: ValueKey(isStaged ? 'staged:${file.path}' : 'unstaged:${file.path}'),
       onTap: () => _showDiffModal(file.path, staged: isStaged),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -581,16 +587,36 @@ class _ProjectGitTabState extends State<ProjectGitTab> {
               padding: const EdgeInsets.all(12),
               child: Column(
                 children: [
-                  TextField(
-                    key: const Key('git-commit-message-field'),
-                    controller: _commitMsgCtrl,
-                    minLines: 1,
-                    maxLines: 4,
-                    decoration: InputDecoration(
-                      hintText: 'Message (Ctrl+Enter to commit)',
-                      isDense: true,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                  Focus(
+                    focusNode: _commitFocusNode,
+                    onKeyEvent: (node, event) {
+                      // Ctrl+Enter (Cmd+Enter on macOS) commits.
+                      final isEnterDown =
+                          event is KeyDownEvent &&
+                          (event.logicalKey == LogicalKeyboardKey.enter ||
+                              event.logicalKey ==
+                                  LogicalKeyboardKey.numpadEnter);
+                      final isModifierDown =
+                          HardwareKeyboard.instance.isControlPressed ||
+                          HardwareKeyboard.instance.isMetaPressed;
+                      if (!isEnterDown || !isModifierDown) {
+                        return KeyEventResult.ignored;
+                      }
+                      if (_isCommitting) return KeyEventResult.ignored;
+                      _commit();
+                      return KeyEventResult.handled;
+                    },
+                    child: TextField(
+                      key: const Key('git-commit-message-field'),
+                      controller: _commitMsgCtrl,
+                      minLines: 1,
+                      maxLines: 4,
+                      decoration: InputDecoration(
+                        hintText: 'Message (Ctrl+Enter to commit)',
+                        isDense: true,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
                     ),
                   ),

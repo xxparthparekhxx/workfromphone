@@ -114,11 +114,12 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
       cfg.backendAccessToken,
       backendUrl: cfg.backendUrl,
     );
-    if (mounted) {
-      setState(() {
-        _llmConfig = cfg;
-      });
-    }
+    // The screen may have been popped while the config was loading; creating
+    // the preview session here would leak it (dispose already ran).
+    if (!mounted) return;
+    setState(() {
+      _llmConfig = cfg;
+    });
     _ensurePreviewSession(cfg);
     await _initConversationSession();
     _fetchModelsList();
@@ -259,7 +260,37 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
       activeConversationId: _currentSession?.id,
       onSelectConversation: _switchConversation,
       onNewConversation: _createNewConversation,
+      onActiveConversationDeleted: _handleActiveConversationDeleted,
     );
+  }
+
+  /// The active conversation was deleted from the history sheet. Reset to a
+  /// brand-new session so a later `_saveCurrentSession()` can never
+  /// re-save (and resurrect) the deleted id.
+  Future<void> _handleActiveConversationDeleted() async {
+    if (_isRunning) {
+      _chatService.cancel();
+    }
+    final fresh = ConversationSession(
+      id: 'conv_${DateTime.now().millisecondsSinceEpoch}',
+      projectPath: widget.project.path,
+      title: 'New Conversation',
+      model: _llmConfig.model,
+    );
+    await StorageService.saveConversation(widget.project.path, fresh);
+    await StorageService.saveActiveConversationId(
+      widget.project.path,
+      fresh.id,
+    );
+    if (mounted) {
+      setState(() {
+        _currentSession = fresh;
+        _messages.clear();
+        _stats = const TaskStats();
+        _isRunning = false;
+      });
+      _scrollToBottom(force: true, animated: false);
+    }
   }
 
   Future<void> _deleteMessage(ChatMessage msg) async {
@@ -359,13 +390,14 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
     }
   }
 
+  /// Keystrokes only lazily kick off the project-file fetch; the suggestions
+  /// panel rebuilds itself via a ValueListenableBuilder on the controller,
+  /// so no root setState (and full screen rebuild) happens per keystroke.
   void _handleComposerChanged() {
-    if (!mounted) return;
     final mention = ChatComposerService.mentionTrigger(_inputCtrl.value);
     if (mention != null && _projectFiles.isEmpty && !_isLoadingProjectFiles) {
       _loadProjectFiles();
     }
-    setState(() {});
   }
 
   Future<void> _loadProjectFiles() async {
@@ -700,7 +732,10 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
             _isRunning = false;
             assistantMsg.isStreaming = false;
             assistantMsg.isError = true;
-            assistantMsg.content += '\n\n⚠️ $err';
+            // Append a NEW trailing text element; the `content` setter would
+            // overwrite the FIRST text element, mangling messages that have
+            // multiple segments (text → tool card → text).
+            assistantMsg.elements.add(TextChatElement('\n\n⚠️ $err'));
             assistantMsg.statusMessage = null;
             _stats = _stats.copyWith(isStreaming: false);
           });
@@ -1095,10 +1130,18 @@ class _ProjectChatScreenState extends State<ProjectChatScreen>
   }
 
   Widget _buildComposerSuggestions(ThemeData theme) {
-    final commandSuggestions = ChatComposerService.commandSuggestions(
-      _inputCtrl.value,
+    // Rebuilds only this subtree per keystroke, via the controller.
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: _inputCtrl,
+      builder: (context, value, _) {
+        return _buildComposerSuggestionsFor(value, theme);
+      },
     );
-    final mention = ChatComposerService.mentionTrigger(_inputCtrl.value);
+  }
+
+  Widget _buildComposerSuggestionsFor(TextEditingValue value, ThemeData theme) {
+    final commandSuggestions = ChatComposerService.commandSuggestions(value);
+    final mention = ChatComposerService.mentionTrigger(value);
     if (commandSuggestions.isEmpty && mention == null) {
       return const SizedBox.shrink();
     }

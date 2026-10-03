@@ -12,12 +12,19 @@ class ConversationHistorySheet extends StatefulWidget {
   final ValueChanged<ConversationSession> onSelectConversation;
   final VoidCallback onNewConversation;
 
+  /// Invoked after the ACTIVE conversation is deleted. The owning screen
+  /// must reset its current session to a fresh one so the deleted
+  /// conversation is never re-saved (and resurrected) by a later save. The
+  /// sheet awaits it so the list reload below sees the new state.
+  final Future<void> Function()? onActiveConversationDeleted;
+
   const ConversationHistorySheet({
     super.key,
     required this.project,
     required this.activeConversationId,
     required this.onSelectConversation,
     required this.onNewConversation,
+    this.onActiveConversationDeleted,
   });
 
   static Future<void> show(
@@ -26,6 +33,7 @@ class ConversationHistorySheet extends StatefulWidget {
     required String? activeConversationId,
     required ValueChanged<ConversationSession> onSelectConversation,
     required VoidCallback onNewConversation,
+    Future<void> Function()? onActiveConversationDeleted,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -36,6 +44,7 @@ class ConversationHistorySheet extends StatefulWidget {
         activeConversationId: activeConversationId,
         onSelectConversation: onSelectConversation,
         onNewConversation: onNewConversation,
+        onActiveConversationDeleted: onActiveConversationDeleted,
       ),
     );
   }
@@ -69,27 +78,32 @@ class _ConversationHistorySheetState extends State<ConversationHistorySheet> {
 
   Future<void> _renameConversation(ConversationSession session) async {
     final textCtrl = TextEditingController(text: session.title);
-    final newTitle = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Rename Conversation'),
-        content: TextField(
-          controller: textCtrl,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Conversation Title'),
+    String? newTitle;
+    try {
+      newTitle = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Rename Conversation'),
+          content: TextField(
+            controller: textCtrl,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Conversation Title'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, textCtrl.text.trim()),
+              child: const Text('Save'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, textCtrl.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      textCtrl.dispose();
+    }
 
     if (newTitle != null && newTitle.isNotEmpty && newTitle != session.title) {
       session.title = newTitle;
@@ -125,8 +139,14 @@ class _ConversationHistorySheetState extends State<ConversationHistorySheet> {
     );
 
     if (confirm == true) {
+      final wasActive = session.id == widget.activeConversationId;
       await StorageService.deleteConversation(widget.project.path, session.id);
-      await _loadConversations();
+      if (mounted) {
+        if (wasActive) {
+          await widget.onActiveConversationDeleted?.call();
+        }
+        await _loadConversations();
+      }
     }
   }
 
@@ -233,6 +253,7 @@ class _ConversationHistorySheetState extends State<ConversationHistorySheet> {
                             session.id == widget.activeConversationId;
 
                         return Material(
+                          key: ValueKey(session.id),
                           color: isActive
                               ? AppColors.primaryTint
                               : Colors.transparent,

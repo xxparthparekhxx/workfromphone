@@ -368,6 +368,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     final theme = Theme.of(context);
     final type = project.projectType;
     return InkWell(
+      key: ValueKey(project.path),
       onTap: () => _openChat(project),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(

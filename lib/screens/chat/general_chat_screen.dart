@@ -139,6 +139,13 @@ class _GeneralChatScreenState extends State<GeneralChatScreen> {
       _chatService.cancel();
     }
     await _saveCurrentSession();
+    await _startFreshChat();
+  }
+
+  /// Switches to a brand-new empty session. Used after the current
+  /// conversation has been DELETED (where re-saving the just-deleted session
+  /// would resurrect it) — the deleted session is never re-saved.
+  Future<void> _startFreshChat() async {
     final newSession = ConversationSession(
       id: 'gen_conv_${DateTime.now().millisecondsSinceEpoch}',
       projectPath: '__general__',
@@ -449,11 +456,17 @@ class _GeneralChatScreenState extends State<GeneralChatScreen> {
                               color: AppColors.dangerText,
                               tooltip: 'Delete chat',
                               onPressed: () async {
+                                final wasCurrent = isCurrent;
                                 await StorageService.deleteGeneralConversation(
                                   item.id,
                                 );
-                                if (isCurrent) {
-                                  await _createNewChat();
+                                if (wasCurrent) {
+                                  // The deleted session must never be
+                                  // re-saved: go straight to a fresh one.
+                                  if (_isRunning) {
+                                    _chatService.cancel();
+                                  }
+                                  await _startFreshChat();
                                 }
                                 if (ctx.mounted) {
                                   Navigator.pop(ctx);

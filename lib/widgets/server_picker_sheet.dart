@@ -219,6 +219,7 @@ class _ServerPickerSheetState extends State<ServerPickerSheet> {
                     : (status == false ? AppTone.danger : AppTone.neutral);
 
                 return InkWell(
+                  key: ValueKey(p.id),
                   onTap: () => _selectServer(p),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(

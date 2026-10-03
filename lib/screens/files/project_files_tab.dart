@@ -187,30 +187,35 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
 
   Future<void> _createNewItem({required bool isDir}) async {
     final nameCtrl = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(isDir ? 'New Folder' : 'New File'),
-        content: TextField(
-          controller: nameCtrl,
-          autofocus: true,
-          decoration: InputDecoration(
-            hintText: isDir ? 'folder_name' : 'filename.dart',
-            border: const OutlineInputBorder(),
+    String? name;
+    try {
+      name = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(isDir ? 'New Folder' : 'New File'),
+          content: TextField(
+            controller: nameCtrl,
+            autofocus: true,
+            decoration: InputDecoration(
+              hintText: isDir ? 'folder_name' : 'filename.dart',
+              border: const OutlineInputBorder(),
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, nameCtrl.text.trim()),
+              child: const Text('Create'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, nameCtrl.text.trim()),
-            child: const Text('Create'),
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      nameCtrl.dispose();
+    }
 
     if (name != null && name.isNotEmpty) {
       final relDir = _currentPath.startsWith(widget.project.path)
@@ -227,6 +232,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
           relativePath: fullRelPath,
           isDir: isDir,
         );
+        if (!mounted) return;
         _loadDirectory(_currentPath);
         if (!isDir) {
           _openFile('${widget.project.path}/$fullRelPath');
@@ -416,6 +422,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
           projectPath: widget.project.path,
           relativePath: relPath,
         );
+        if (!mounted) return;
         if (_activeFilePath == relPath) {
           setState(() => _activeFilePath = null);
         }
@@ -713,6 +720,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                   itemBuilder: (context, idx) {
                     final item = _items[idx];
                     return ListTile(
+                      key: ValueKey(item.path),
                       leading: MaterialFileIcon(
                         name: item.name,
                         isDir: item.isDir,
