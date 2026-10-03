@@ -168,41 +168,28 @@ val patchProotNeeded = tasks.register("patchProotNeeded") {
             // NUL-pad the replacement to the alias length so the ELF string
             // table size is unchanged.
             val replacement = newName + ByteArray(from.size - newName.size)
-            val out = java.io.ByteArrayOutputStream()
-            var i = 0
-            while (i < data.size) {
-                var match = -1
-                if (data.size - i >= from.size) {
-                    for (j in 0..data.size - i - from.size) {
-                        var found = true
-                        for (k in from.indices) {
-                            if (data[i + j + k] != from[k]) {
-                                found = false
-                                break
-                            }
-                        }
-                        if (found) {
-                            match = j
-                            break
-                        }
+            val result = data.copyOf()
+            for (i in 0..result.size - from.size) {
+                var match = true
+                for (j in from.indices) {
+                    if (result[i + j] != from[j]) {
+                        match = false
+                        break
                     }
                 }
-                if (match < 0) {
-                    out.write(data[i].toInt() and 0xFF)
-                    i++
-                } else {
-                    out.write(replacement)
-                    i += match + from.size
+                if (match) {
+                    for (j in replacement.indices) {
+                        result[i + j] = replacement[j]
+                    }
                 }
             }
-            return out.toByteArray()
+            return result
         }
 
         for (abi in listOf("arm64-v8a", "x86_64")) {
             val lib = file("src/main/jniLibs/$abi/libproot.so")
             if (!lib.isFile) continue
-            val data = ByteArray(lib.length().toInt())
-            lib.inputStream().use { it.readFully(data) }
+            val data = lib.readBytes()
             val hasAlias = oldAliases.any { containsPattern(data, it) }
             if (!hasAlias && containsPattern(data, newName)) {
                 logger.lifecycle("$lib: already patched (NEEDs libtalloc.so), skipping")
@@ -215,7 +202,7 @@ val patchProotNeeded = tasks.register("patchProotNeeded") {
                 )
             }
             val patched = oldAliases.fold(data) { acc, alias -> replacePattern(acc, alias) }
-            lib.outputStream().use { it.write(patched) }
+            lib.writeBytes(patched)
             logger.lifecycle("$lib: rewrote DT_NEEDED -> libtalloc.so")
         }
     }

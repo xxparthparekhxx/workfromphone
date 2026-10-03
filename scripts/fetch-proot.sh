@@ -21,18 +21,19 @@
 #                       default (/data/data/com.termux/...) is wrong here.
 set -euo pipefail
 
-PROOT_VERSION="5.1.107.92"
-TALLOC_VERSION="2.4.3"
+PROOT_VERSION="5.1.107.96"
+TALLOC_VERSION="2.5.0"
 SHMEM_VERSION="0.7"
 APT_BASE="https://packages.termux.dev/apt/termux-main/pool"
+APT_FALLBACK="https://grimler.se/termux/termux-main/pool"
 
 declare -A PROOT_SHA256=(
-  [arm64-v8a]="1f1c983509701f6826f568482c70673ee453a9ba38c9f5fa445a472d6b7524e9"
-  [x86_64]="70236632826c30ec0245082b633bbc7ef1e9fa5531bd51bd4f20231bfcdc999b"
+  [arm64-v8a]="8199dca06dccb693ec09fb1759e3e1ad08b4863f0c11c612f89c20bd9ecdc1a0"
+  [x86_64]="77ea45540071ca543adda2b51aca2bc3761c52904d013fd0890682288eff9455"
 )
 declare -A TALLOC_SHA256=(
-  [arm64-v8a]="ac81ad623d74c209718b9f3acb2dd702cc8a88c431e820d212229910b4db29da"
-  [x86_64]="7ca2eaae2e53b28228a01301bc410b62845403d6317c25b8e0a7f40681de0628"
+  [arm64-v8a]="556591f43bb773ad8777e1a29522640866a55f95dab71914418b94a8c58ad5a7"
+  [x86_64]="b8c6d95f20075dc1f9ec6573575b2444e8d526e48e0d8d6d5cf4e071e6e06530"
 )
 declare -A SHMEM_SHA256=(
   [arm64-v8a]="0da3a24d558b93c92bcf8d611e0826a99ff96e396b148e6cdf33b47c47c57ff6"
@@ -46,13 +47,22 @@ DEST="$SCRIPT_DIR/android/app/src/main/jniLibs"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-download() { # url, sha256, out
+download() { # url, expected, out
   local url="$1" expected="$2" out="$3"
   echo "Fetching $url"
-  if command -v curl >/dev/null; then
-    curl -fsSL "$url" -o "$out"
-  else
-    wget -qO "$out" "$url"
+  local fetched=0
+  if curl -fsSL "$url" -o "$out"; then
+    fetched=1
+  elif [ -n "${APT_FALLBACK:-}" ]; then
+    local fallback_url="${url/$APT_BASE/$APT_FALLBACK}"
+    echo "Primary failed, trying fallback: $fallback_url"
+    if curl -fsSL "$fallback_url" -o "$out"; then
+      fetched=1
+    fi
+  fi
+  if [ "$fetched" -eq 0 ]; then
+    echo "Failed to download $url" >&2
+    exit 1
   fi
   local actual
   actual="$(sha256sum "$out" | awk '{print $1}')"
@@ -92,7 +102,7 @@ for abi in arm64-v8a x86_64; do
 
   extract_member "$proot_deb" "usr/bin/proot" "$outdir/libproot.so"
   extract_member "$proot_deb" "usr/libexec/proot/loader" "$outdir/libproot-loader.so"
-  extract_member "$talloc_deb" "usr/lib/libtalloc.so.2.4.3" "$outdir/libtalloc.so"
+  extract_member "$talloc_deb" "usr/lib/libtalloc.so.${TALLOC_VERSION}" "$outdir/libtalloc.so"
   extract_member "$shmem_deb" "usr/lib/libandroid-shmem.so" "$outdir/libandroid-shmem.so"
 
   python3 "$PATCH" "$outdir/libproot.so"

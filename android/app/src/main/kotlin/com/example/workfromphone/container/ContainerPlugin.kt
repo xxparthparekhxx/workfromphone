@@ -268,7 +268,7 @@ class ContainerPlugin(private val context: Context) : MethodChannel.MethodCallHa
         val sliceSize = minOf(maxBytes, length).toInt()
         val slice = ByteArray(sliceSize)
         if (sliceSize > 0) {
-            java.io.RandomAccessFile(file).use { raf ->
+            java.io.RandomAccessFile(file, "r").use { raf ->
                 raf.seek(length - sliceSize)
                 raf.readFully(slice)
             }
