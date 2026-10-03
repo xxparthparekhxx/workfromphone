@@ -9,16 +9,17 @@
 #   .github/workflows/backend-release.yml: aarch64 / x86_64.
 #
 # Modes:
-#   Full debootstrap (default): requires root, debootstrap, and (for
-#     cross-arch builds) qemu-user-static. Produces a bootable ~150-300MB
-#     tarball with Debian minimal + backend + git/curl/ca-certificates/
-#     build-essential. Prefers the prebuilt PyInstaller backend binary
-#     (first arg --backend-tar) and falls back to an apt-python venv
-#     installed inside the rootfs on first boot.
+#   Full debootstrap (default): requires root and debootstrap; run on a
+#     native-arch host (cross-arch additionally needs qemu-user-static). CI
+#     (backend-release.yml) uses this mode on a runner matching each target
+#     arch, producing a bootable ~150-300MB tarball with Debian minimal +
+#     backend + git/curl/ca-certificates/build-essential. Prefers the
+#     prebuilt PyInstaller backend binary (--backend-tar) and falls back to
+#     an apt-python venv installed inside the rootfs on first boot.
 #   --overlay-only: assembles just the WorkFromPhone overlay
-#     (opt/workfromphone/...) from an already-built backend tarball. Used by
-#     CI, where the full Debian userland comes from a published base rootfs
-#     and this overlay is merged on-device at setup time.
+#     (opt/workfromphone/...) from an already-built backend tarball. Local /
+#     advanced use only — the published image is the full rootfs above, not
+#     an overlay.
 set -euo pipefail
 
 ARCH=""

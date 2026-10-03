@@ -13,9 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # No pinned version: pubspec requires Dart ^3.13, so always validate
-      # against the latest stable toolchain instead of drifting behind it.
-      - uses: subosito/flutter-action@v2
+      # Action is pinned to the commit behind tag v2 (v2.23.0); bump the
+      # pin deliberately. channel stays stable so we validate against the
+      # latest stable toolchain (pubspec requires Dart ^3.13) instead of
+      # drifting behind it.
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
       - run: flutter --version
